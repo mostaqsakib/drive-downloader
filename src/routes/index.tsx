@@ -286,22 +286,6 @@ function Home() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Select
-                  value={quality}
-                  onValueChange={(v) => setQuality(v as Quality)}
-                  disabled={mode === "audio"}
-                >
-                  <SelectTrigger className="h-12 flex-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {QUALITY_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Button
                   type="submit"
                   className="h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 md:w-48"
