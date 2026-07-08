@@ -4,6 +4,9 @@ Called from the DriveGrabber web app via a shared secret token.
 """
 
 import logging
+import json
+import html as html_lib
+import http.cookiejar
 import os
 import re
 import shutil
@@ -12,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
+import urllib.error
+import urllib.request
 
 import yt_dlp
 from fastapi import FastAPI, Header, HTTPException
@@ -148,15 +153,18 @@ def expand_cookie_domains(cookies_text: str) -> str:
     seen: set[str] = set()
     for line in cookies_text.splitlines():
         variants = [line]
-        if line and not line.startswith("#") and "\t" in line:
-            parts = line.split("\t")
+        http_only = line.startswith("#HttpOnly_")
+        cookie_line = line.removeprefix("#HttpOnly_") if http_only else line
+        if cookie_line and (http_only or not cookie_line.startswith("#")) and "\t" in cookie_line:
+            parts = cookie_line.split("\t")
             if len(parts) >= 7:
                 original_domain = parts[0]
                 leading_dot = original_domain.startswith(".")
                 for alias in mirror_host_aliases(original_domain):
                     alias_parts = parts.copy()
                     alias_parts[0] = f".{alias}" if leading_dot else alias
-                    variants.append("\t".join(alias_parts))
+                    variant = "\t".join(alias_parts)
+                    variants.append(f"#HttpOnly_{variant}" if http_only else variant)
         for variant in variants:
             if variant not in seen:
                 seen.add(variant)
@@ -170,8 +178,8 @@ def candidate_download_urls(url: str) -> list[str]:
     parts = urlsplit(primary)
     host = parts.netloc.lower()
     mirror_hosts = {
-        "faphouse2.com": "faphouse.com",
-        "www.faphouse2.com": "www.faphouse.com",
+        "faphouse.com": "faphouse2.com",
+        "www.faphouse.com": "www.faphouse2.com",
     }
     candidates = [primary]
     if host in mirror_hosts:
@@ -183,6 +191,143 @@ def candidate_download_urls(url: str) -> list[str]:
 def is_unsupported_error(error: Exception) -> bool:
     text = str(error).lower()
     return "unsupported url" in text or "no suitable extractor" in text
+
+
+def is_faphouse_url(url: str) -> bool:
+    host = urlsplit(normalize_download_url(url)).netloc.lower().removeprefix("www.")
+    return host in {"faphouse.com", "faphouse2.com"}
+
+
+def faphouse_origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def request_with_cookiefile(
+    url: str,
+    cookies_path: Optional[Path],
+    *,
+    data: Optional[dict] = None,
+    referer: Optional[str] = None,
+) -> str:
+    handlers = []
+    if cookies_path:
+        jar = http.cookiejar.MozillaCookieJar(str(cookies_path))
+        jar.load(ignore_discard=True, ignore_expires=True)
+        handlers.append(urllib.request.HTTPCookieProcessor(jar))
+
+    payload = json.dumps(data).encode("utf-8") if data is not None else None
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/128.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "application/json, text/plain, */*" if data is not None else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+        headers["X-Requested-With"] = "XMLHttpRequest"
+        headers["Origin"] = faphouse_origin(url)
+
+    opener = urllib.request.build_opener(*handlers)
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST" if data is not None else "GET")
+    with opener.open(req, timeout=30) as response:
+        return response.read().decode("utf-8", "ignore")
+
+
+def parse_view_state(webpage: str) -> dict:
+    match = re.search(
+        r'<script[^>]+id=["\']view-state-data["\'][^>]*>(.*?)</script>',
+        webpage,
+        flags=re.I | re.S,
+    )
+    if not match:
+        return {}
+    try:
+        return json.loads(html_lib.unescape(match.group(1)))
+    except Exception:
+        return {}
+
+
+def media_urls_from_text(text: str) -> list[str]:
+    haystacks = [text, html_lib.unescape(text).replace("\\/", "/")]
+    urls: list[str] = []
+    seen: set[str] = set()
+    pattern = re.compile(r'https?:\\?/\\?/[^"\'<>\s\\]+?(?:\.m3u8|\.mpd|\.mp4)(?:\?[^"\'<>\s\\]*)?', re.I)
+    for haystack in haystacks:
+        for raw in pattern.findall(haystack):
+            url = html_lib.unescape(raw).replace("\\/", "/")
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+    return urls
+
+
+def best_media_url(urls: list[str], require_full: bool) -> Optional[str]:
+    if require_full:
+        full_urls = [
+            url
+            for url in urls
+            if not any(token in url.lower() for token in ("/trailer/", "preview", "heatmap", "heat-preview"))
+        ]
+        urls = full_urls or urls
+    if not urls:
+        return None
+
+    def score(url: str) -> tuple[int, int, int]:
+        lower = url.lower()
+        full_score = 0 if any(token in lower for token in ("/trailer/", "preview", "heatmap", "heat-preview")) else 1
+        ext_score = 2 if ".m3u8" in lower else 1 if ".mp4" in lower else 0
+        quality = max([int(q) for q in re.findall(r'(?<!\d)(2160|1440|1080|720|480|360)(?!\d)', lower)] or [0])
+        return (full_score, ext_score, quality)
+
+    return max(urls, key=score)
+
+
+def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], require_premium: bool) -> Optional[str]:
+    webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
+    state = parse_view_state(webpage)
+    video = state.get("video") if isinstance(state.get("video"), dict) else {}
+    is_premium = video.get("videoAccessType") == "premium"
+    is_allowed = bool(video.get("videoViewAllowed"))
+
+    if require_premium and is_premium and not is_allowed:
+        video_id = video.get("videoId")
+        studio_id = video.get("studioId")
+        if video_id:
+            unlock_url = f"{faphouse_origin(page_url)}/api/unlock/video/{video_id}"
+            try:
+                unlock_text = request_with_cookiefile(
+                    unlock_url,
+                    cookies_path,
+                    data={"studioId": studio_id},
+                    referer=page_url,
+                )
+                unlocked_media = best_media_url(media_urls_from_text(unlock_text), require_full=True)
+                if unlocked_media:
+                    return unlocked_media
+                webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
+                state = parse_view_state(webpage)
+                video = state.get("video") if isinstance(state.get("video"), dict) else {}
+                is_allowed = bool(video.get("videoViewAllowed"))
+            except urllib.error.HTTPError as e:
+                if e.code in {401, 403}:
+                    raise RuntimeError(
+                        "Premium cookies diye Faphouse login unlock hocche na. Site-e login kore fresh cookies.txt export kore abar save korun."
+                    ) from e
+                raise
+
+    media_url = best_media_url(media_urls_from_text(webpage), require_full=require_premium)
+    if require_premium and is_premium and not is_allowed:
+        raise RuntimeError(
+            "Premium cookies active na bole full video unlock hoyni. Fresh logged-in cookies.txt export kore retry korun."
+        )
+    return media_url
+
 
 def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optional[Path]) -> dict:
     if mode == "audio":
