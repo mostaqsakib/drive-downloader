@@ -1003,6 +1003,75 @@ def download_url(
     raise RuntimeError("Download finished but no file found")
 
 
+def run_download_to_drive(body: DownloadIn) -> DownloadOut:
+    tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
+    try:
+        t0 = time.time()
+        file_path = download_url(body.url, tmp_dir, body.mode, body.quality, body.cookies)
+        size_mb = file_path.stat().st_size / (1024 * 1024)
+        dl_secs = time.time() - t0
+
+        t1 = time.time()
+        drive_file = upload_to_drive(file_path)
+        up_secs = time.time() - t1
+
+        return DownloadOut(
+            ok=True,
+            name=drive_file["name"],
+            size_mb=round(size_mb, 2),
+            download_seconds=round(dl_secs, 1),
+            upload_seconds=round(up_secs, 1),
+            view_link=drive_file.get("webViewLink") or drive_file.get("webContentLink"),
+            file_id=drive_file["id"],
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def download_job_id(body: DownloadIn) -> str:
+    seed = body.client_job_id or f"{time.time_ns()}"
+    digest = hashlib.sha1(
+        json.dumps(
+            {
+                "seed": seed,
+                "url": body.url,
+                "mode": body.mode,
+                "quality": body.quality,
+                "cookies": body.cookies or "",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    safe_seed = re.sub(r"[^a-zA-Z0-9_-]+", "", seed)[:48] or "job"
+    return f"{safe_seed}-{digest}"
+
+
+def cleanup_download_jobs() -> None:
+    cutoff = time.time() - _DOWNLOAD_JOB_TTL
+    with _DOWNLOAD_JOBS_LOCK:
+        stale = [job_id for job_id, job in _DOWNLOAD_JOBS.items() if job.get("updated_at", 0) < cutoff]
+        for job_id in stale:
+            _DOWNLOAD_JOBS.pop(job_id, None)
+
+
+def run_download_job(job_id: str, body: DownloadIn) -> None:
+    with _DOWNLOAD_JOBS_LOCK:
+        _DOWNLOAD_JOBS[job_id].update({"status": "running", "updated_at": time.time()})
+    try:
+        result = run_download_to_drive(body)
+        with _DOWNLOAD_JOBS_LOCK:
+            _DOWNLOAD_JOBS[job_id].update(
+                {"status": "done", "result": result, "error": None, "updated_at": time.time()}
+            )
+    except Exception as e:
+        logger.exception("download job failed: %s", job_id)
+        detail = str(e).strip() or e.__class__.__name__
+        with _DOWNLOAD_JOBS_LOCK:
+            _DOWNLOAD_JOBS[job_id].update(
+                {"status": "error", "result": None, "error": detail[:400], "updated_at": time.time()}
+            )
+
+
 
 
 # ---------- Routes ----------
@@ -1029,31 +1098,54 @@ def download(body: DownloadIn, x_api_token: str = Header(None)):
     if not x_api_token or x_api_token != API_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
     try:
-        t0 = time.time()
-        file_path = download_url(body.url, tmp_dir, body.mode, body.quality, body.cookies)
-        size_mb = file_path.stat().st_size / (1024 * 1024)
-        dl_secs = time.time() - t0
-
-        t1 = time.time()
-        drive_file = upload_to_drive(file_path)
-        up_secs = time.time() - t1
-
-        return DownloadOut(
-            ok=True,
-            name=drive_file["name"],
-            size_mb=round(size_mb, 2),
-            download_seconds=round(dl_secs, 1),
-            upload_seconds=round(up_secs, 1),
-            view_link=drive_file.get("webViewLink") or drive_file.get("webContentLink"),
-            file_id=drive_file["id"],
-        )
+        return run_download_to_drive(body)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("download failed")
         detail = str(e).strip() or e.__class__.__name__
         raise HTTPException(status_code=500, detail=detail[:400])
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.post("/download/start", response_model=DownloadStartOut)
+def start_download(body: DownloadIn, x_api_token: str = Header(None)):
+    if not x_api_token or x_api_token != API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    cleanup_download_jobs()
+    job_id = download_job_id(body)
+    with _DOWNLOAD_JOBS_LOCK:
+        existing = _DOWNLOAD_JOBS.get(job_id)
+        if existing:
+            return DownloadStartOut(ok=True, job_id=job_id, status=existing["status"])
+        _DOWNLOAD_JOBS[job_id] = {
+            "status": "queued",
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+            "updated_at": time.time(),
+        }
+
+    thread = threading.Thread(target=run_download_job, args=(job_id, body), daemon=True)
+    thread.start()
+    return DownloadStartOut(ok=True, job_id=job_id, status="queued")
+
+
+@app.get("/download/status/{job_id}", response_model=DownloadStatusOut)
+def download_status(job_id: str, x_api_token: str = Header(None)):
+    if not x_api_token or x_api_token != API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    cleanup_download_jobs()
+    with _DOWNLOAD_JOBS_LOCK:
+        job = _DOWNLOAD_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found or expired")
+        return DownloadStatusOut(
+            ok=True,
+            job_id=job_id,
+            status=job["status"],
+            result=job.get("result"),
+            error=job.get("error"),
+        )
