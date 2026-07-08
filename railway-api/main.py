@@ -12,9 +12,10 @@ import re
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -374,6 +375,67 @@ class PremiumAccessError(RuntimeError):
     pass
 
 
+@dataclass
+class ResolvedMedia:
+    url: str
+    title: Optional[str] = None
+
+
+def clean_filename_stem(value: object) -> Optional[str]:
+    """Return a filesystem-safe, human-readable stem while preserving Unicode."""
+    if not isinstance(value, str):
+        return None
+    stem = html_lib.unescape(value).strip()
+    if not stem:
+        return None
+    stem = re.sub(r"[\x00-\x1f\x7f]+", " ", stem)
+    stem = re.sub(r'[<>:"/\\|?*]+', " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" ._-")
+    stem = re.sub(r"\s+[-–—|•]\s+(FapHouse|Faphouse).*?$", "", stem, flags=re.I).strip(" ._-")
+    if not stem or re.fullmatch(r"_?TPL_?", stem, flags=re.I):
+        return None
+    return stem[:200].rstrip(" ._-") or None
+
+
+def faphouse_title_from_page(webpage: str, page_url: str) -> Optional[str]:
+    state = parse_view_state(webpage)
+    video = state.get("video") if isinstance(state.get("video"), dict) else {}
+    candidates: list[object] = []
+
+    for source in (video, state):
+        if not isinstance(source, dict):
+            continue
+        for key in (
+            "title",
+            "videoTitle",
+            "video_title",
+            "name",
+            "displayName",
+            "displayTitle",
+            "seoTitle",
+        ):
+            candidates.append(source.get(key))
+
+    for pattern in (
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<title[^>]*>(.*?)</title>',
+    ):
+        match = re.search(pattern, webpage, flags=re.I | re.S)
+        if match:
+            candidates.append(match.group(1))
+
+    path_slug = unquote(urlsplit(page_url).path.rstrip("/").split("/")[-1])
+    if path_slug and not re.fullmatch(r"[A-Za-z0-9_-]{4,14}", path_slug):
+        candidates.append(path_slug.replace("-", " ").replace("_", " "))
+
+    for candidate in candidates:
+        stem = clean_filename_stem(candidate)
+        if stem:
+            return stem
+    return None
+
+
 def request_with_cookiefile(
     url: str,
     cookies_path: Optional[Path],
@@ -470,8 +532,9 @@ def best_media_url(urls: list[str], require_full: bool) -> Optional[str]:
     return max(urls, key=score)
 
 
-def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], require_premium: bool) -> Optional[str]:
+def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], require_premium: bool) -> Optional[ResolvedMedia]:
     webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
+    page_title = faphouse_title_from_page(webpage, page_url)
     state = parse_view_state(webpage)
     video = state.get("video") if isinstance(state.get("video"), dict) else {}
     is_premium = video.get("videoAccessType") == "premium"
@@ -496,8 +559,9 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
                 )
                 unlocked_media = best_media_url(media_urls_from_text(unlock_text), require_full=True)
                 if unlocked_media:
-                    return unlocked_media
+                    return ResolvedMedia(unlocked_media, page_title)
                 webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
+                page_title = faphouse_title_from_page(webpage, page_url) or page_title
                 state = parse_view_state(webpage)
                 video = state.get("video") if isinstance(state.get("video"), dict) else {}
                 is_allowed = bool(video.get("videoViewAllowed"))
@@ -518,7 +582,7 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
         raise PremiumAccessError(
             "Faphouse page-e sudhu trailer/preview source paowa geche — full video source unlock hoyni. Fresh premium cookies.txt save kore retry korun."
         )
-    return media_url
+    return ResolvedMedia(media_url, page_title) if media_url else None
 
 
 def check_cookie_access(url: str, cookies_text: Optional[str]) -> CookieCheckOut:
@@ -826,19 +890,21 @@ def download_url(
     for attempt_url in candidate_download_urls(url):
         if is_faphouse_url(attempt_url):
             try:
-                media_url = resolve_faphouse_media_url(
+                media = resolve_faphouse_media_url(
                     attempt_url,
                     cookies_path,
                     require_premium=cookies_path is not None,
                 )
-                if media_url:
+                if media:
                     media_opts = {**base_opts}
+                    if media.title:
+                        media_opts["outtmpl"] = str(out_dir / f"{media.title}.%(ext)s")
                     media_opts["http_headers"] = {
                         **base_opts.get("http_headers", {}),
                         "Referer": attempt_url,
                         "Origin": faphouse_origin(attempt_url),
                     }
-                    result = _run(media_url, media_opts)
+                    result = _run(media.url, media_opts)
                     if result:
                         return result
             except PremiumAccessError as e:
