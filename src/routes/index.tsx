@@ -301,7 +301,35 @@ function Home() {
               )}
             </div>
           )}
+
+          {driveResult && driveResult.kind === "success" && (
+            <div className="mx-auto mt-6 max-w-3xl">
+              <div className="glass-card flex items-center justify-between gap-3 rounded-xl border-primary/40 p-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <CheckCircle2 className="h-6 w-6 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{driveResult.name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {driveResult.sizeMb} MB • download {driveResult.downloadSeconds}s • upload{" "}
+                      {driveResult.uploadSeconds}s
+                    </div>
+                  </div>
+                </div>
+                {driveResult.viewLink && (
+                  <a href={driveResult.viewLink} target="_blank" rel="noopener noreferrer">
+                    <Button
+                      size="sm"
+                      className="gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open in Drive
+                    </Button>
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </section>
+
 
         <section className="mt-20 grid gap-4 md:grid-cols-3">
           <FeatureCard
