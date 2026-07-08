@@ -156,7 +156,10 @@ export const fetchDownload = createServerFn({ method: "POST" })
 
     // Give the user a friendly message
     let friendly = lastError;
-    if (/youtube\.login/i.test(lastError)) {
+    if (/link\.invalid|link\.unsupported|unsupported/i.test(lastError)) {
+      friendly =
+        "Ei site/URL Cobalt support kore na. Supported: YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, Facebook, SoundCloud, Twitch, Bluesky, Tumblr, Pinterest, Dailymotion, Loom, Rutube, VK, Bilibili, Snapchat. Adult sites (xxxbp, pornhub, xvideos ityadi) support nei.";
+    } else if (/youtube\.login/i.test(lastError)) {
       friendly =
         "YouTube ei muhurte ei public instance gulor IP block korche (bot protection). Kichukhon por abar try koren, ba onno video/site try koren.";
     } else if (/auth/i.test(lastError)) {
@@ -164,3 +167,4 @@ export const fetchDownload = createServerFn({ method: "POST" })
     }
     return { kind: "error", message: friendly };
   });
+
