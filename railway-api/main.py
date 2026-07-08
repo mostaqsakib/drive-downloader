@@ -147,12 +147,13 @@ def get_drive_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def upload_to_drive(file_path: Path) -> dict:
+def upload_to_drive(file_path: Path, progress_cb=None) -> dict:
     service = get_drive_service()
     metadata = {"name": file_path.name}
     if GOOGLE_DRIVE_FOLDER_ID:
         metadata["parents"] = [GOOGLE_DRIVE_FOLDER_ID]
 
+    total_size = file_path.stat().st_size
     media = MediaFileUpload(
         str(file_path),
         resumable=True,
@@ -164,8 +165,19 @@ def upload_to_drive(file_path: Path) -> dict:
         fields="id, name, size, webViewLink, webContentLink",
     )
     response = None
+    if progress_cb:
+        try:
+            progress_cb("uploading", 0, total_size)
+        except Exception:
+            pass
     while response is None:
-        _, response = request.next_chunk()
+        status, response = request.next_chunk()
+        if progress_cb:
+            try:
+                uploaded = status.resumable_progress if status else (total_size if response else 0)
+                progress_cb("uploading", uploaded, total_size)
+            except Exception:
+                pass
 
     try:
         service.permissions().create(
