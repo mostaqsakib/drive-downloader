@@ -35,6 +35,15 @@ export function canonicalHost(host: string): string {
   return host.replace(/^\.+/, "").replace(/^www\./i, "").toLowerCase();
 }
 
+// Collapse mirror suffixes like "faphouse2.com" → "faphouse.com" so cookies
+// saved for the main domain also match numbered mirrors, and vice versa.
+function mirrorAliases(host: string): string[] {
+  const aliases = new Set<string>([host]);
+  const stripped = host.replace(/^([a-z]+?)\d+(\.[a-z.]+)$/i, "$1$2");
+  if (stripped !== host) aliases.add(stripped);
+  return [...aliases];
+}
+
 export function hostFromUrl(url: string): string | null {
   try {
     return canonicalHost(new URL(url).hostname);
@@ -44,13 +53,19 @@ export function hostFromUrl(url: string): string | null {
 }
 
 // Return the stored cookies whose stored domain is a suffix of the URL's
-// host — so "youtube.com" bucket matches "m.youtube.com" and "music.youtube.com".
+// host. Also matches numbered mirrors ("faphouse2.com" ↔ "faphouse.com").
 export function pickCookiesFor(url: string): CookieEntry | null {
   const host = hostFromUrl(url);
   if (!host) return null;
+  const hosts = mirrorAliases(host);
   const entries = loadCookies();
   const match = entries
-    .filter((e) => host === e.domain || host.endsWith("." + e.domain))
+    .filter((e) => {
+      const aliases = mirrorAliases(e.domain);
+      return hosts.some((h) =>
+        aliases.some((d) => h === d || h.endsWith("." + d) || d.endsWith("." + h)),
+      );
+    })
     .sort((a, b) => b.domain.length - a.domain.length)[0];
   return match ?? null;
 }
