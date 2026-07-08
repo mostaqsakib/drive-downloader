@@ -223,10 +223,14 @@ function Home() {
           </div>
           <span className="text-lg font-semibold tracking-tight">DriveGrabber</span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <ShieldCheck className="h-4 w-4 text-primary" />
-          No ads • No signup
+        <div className="flex items-center gap-3">
+          <CookieManager currentUrl={url} />
+          <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+            <ShieldCheck className="h-4 w-4 text-primary" />
+            No ads • No signup
+          </div>
         </div>
+
       </header>
 
       <main className="mx-auto max-w-6xl px-6 pb-24">
