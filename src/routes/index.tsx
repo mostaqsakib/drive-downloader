@@ -77,11 +77,10 @@ function Home() {
       setResult(r);
       if (r.kind === "tunnel" || r.kind === "redirect") {
         toast.success("Ready!", { description: "Download link ready — niche click koren." });
-        // auto-open in new tab
         window.open(r.url, "_blank", "noopener,noreferrer");
       } else if (r.kind === "picker") {
         toast.success(`${r.items.length} ta item paoa gelo`);
-      } else {
+      } else if (r.kind === "error") {
         toast.error(r.message);
       }
     },
