@@ -15,6 +15,9 @@ import {
   CheckCircle2,
   XCircle,
   X,
+  KeyRound,
+  Trash2,
+  Cookie,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -29,9 +32,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { fetchDownload } from "@/lib/downloader.functions";
 import { saveToDrive, type DriveResult } from "@/lib/drive-upload.functions";
+import {
+  canonicalHost,
+  hostFromUrl,
+  loadCookies,
+  pickCookiesFor,
+  saveCookies,
+  type CookieEntry,
+} from "@/lib/cookie-store";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
