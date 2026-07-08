@@ -582,6 +582,88 @@ function CookieManager({ currentUrl }: { currentUrl: string }) {
   );
 }
 
+function CookieEntryRow({
+  entry,
+  result,
+  checking,
+  onCheck,
+  onEdit,
+  onRemove,
+}: {
+  entry: CookieEntry;
+  result?: CookieCheckResult;
+  checking: boolean;
+  onCheck: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const summary = summarizeCookies(entry.cookies);
+  const expiryText = summary.earliestExpiry
+    ? `expires ${new Date(summary.earliestExpiry * 1000).toLocaleDateString()}`
+    : summary.sessionRows > 0
+      ? "session cookies"
+      : "no expiry found";
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{entry.domain}</div>
+          <div className="text-xs text-muted-foreground">
+            {entry.label ?? "—"} • {(entry.cookies.length / 1024).toFixed(1)} KB •{" "}
+            {summary.activeRows}/{summary.totalRows || 0} active • {summary.expiredRows} expired •{" "}
+            {expiryText}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="sm" variant="secondary" onClick={onCheck} disabled={checking} className="h-8">
+            {checking ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+            Check
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onEdit} className="h-8">
+            Edit
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onRemove}
+            className="h-8 text-destructive hover:text-destructive"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      {summary.domains.length > 0 && (
+        <div className="mt-2 truncate text-[11px] text-muted-foreground">
+          Cookie domains: {summary.domains.slice(0, 4).join(", ")}
+          {summary.domains.length > 4 ? "…" : ""}
+        </div>
+      )}
+      {result && (
+        <div
+          className={`mt-2 rounded-md border px-2 py-1.5 text-xs ${
+            result.kind === "success" && result.ok
+              ? "border-primary/30 bg-primary/10 text-primary"
+              : "border-destructive/30 bg-destructive/10 text-destructive"
+          }`}
+        >
+          {result.message}
+          {result.kind === "success" && (
+            <span className="mt-1 block text-[11px] opacity-80">
+              matched {result.matchedRows}, active {result.activeRows}, expired {result.expiredRows}
+              {typeof result.premium === "boolean" ? ` • premium: ${result.premium ? "yes" : "no"}` : ""}
+              {typeof result.allowed === "boolean" ? ` • allowed: ${result.allowed ? "yes" : "no"}` : ""}
+              {typeof result.loginDetected === "boolean"
+                ? ` • login: ${result.loginDetected ? "detected" : "not detected"}`
+                : ""}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
   const [, tick] = useState(0);
 
@@ -637,6 +719,12 @@ function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
             <span>
               {job.toDrive ? "Drive" : "Direct"} · {job.mode} · {job.quality}
             </span>
+            {job.toDrive && job.cookieDomain && (
+              <>
+                <span>•</span>
+                <span>Cookie: {job.cookieDomain}</span>
+              </>
+            )}
           </div>
 
           {job.status === "running" && (
