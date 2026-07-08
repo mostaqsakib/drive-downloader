@@ -156,11 +156,20 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
     return opts
 
 
-def download_url(url: str, out_dir: Path, mode: str, quality: str) -> Path:
+def download_url(
+    url: str,
+    out_dir: Path,
+    mode: str,
+    quality: str,
+    request_cookies: Optional[str] = None,
+) -> Path:
+    # Per-request cookies (from the web app) take priority over the
+    # server-wide YT_DLP_COOKIES env fallback.
     cookies_path = None
-    if YT_DLP_COOKIES:
+    cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
+    if cookies_text:
         cookies_path = out_dir / "cookies.txt"
-        cookies_path.write_text(YT_DLP_COOKIES)
+        cookies_path.write_text(cookies_text)
 
     with yt_dlp.YoutubeDL(build_ydl_opts(out_dir, mode, quality, cookies_path)) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -172,6 +181,7 @@ def download_url(url: str, out_dir: Path, mode: str, quality: str) -> Path:
         if not files:
             raise RuntimeError("Download finished but no file found")
         return max(files, key=lambda p: p.stat().st_size)
+
 
 
 # ---------- Routes ----------
