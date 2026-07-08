@@ -987,6 +987,7 @@ def download_url(
     mode: str,
     quality: str,
     request_cookies: Optional[str] = None,
+    progress_cb=None,
 ) -> Path:
     # Per-request cookies (from the web app) take priority over the
     # server-wide YT_DLP_COOKIES env fallback. If neither is present
