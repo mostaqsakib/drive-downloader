@@ -90,7 +90,7 @@ const MODE_OPTIONS = [
 
 
 type Mode = (typeof MODE_OPTIONS)[number]["value"];
-type Quality = (typeof QUALITY_OPTIONS)[number]["value"];
+type Quality = "max" | "1080" | "720" | "480" | "360";
 
 type JobStatus = "queued" | "running" | "done" | "error";
 
