@@ -500,6 +500,32 @@ def media_urls_from_text(text: str) -> list[str]:
     return urls
 
 
+def media_urls_from_state(state: dict) -> list[str]:
+    """Recursively walk view-state JSON and collect any media URLs.
+    Faphouse stores per-quality sources in nested arrays like
+    video.sources / video.mediaDefinition / video.hls — mining those
+    directly gives us every quality variant, not just what's inlined
+    into the surrounding HTML."""
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, str):
+            if re.match(r'https?://[^\s"\'<>]+\.(m3u8|mpd|mp4)(\?|$)', node, re.I):
+                if node not in seen:
+                    seen.add(node)
+                    urls.append(node)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(state)
+    return urls
+
+
 def is_preview_media_url(url: str) -> bool:
     lower = url.lower()
     return any(
@@ -522,12 +548,15 @@ def best_media_url(urls: list[str], require_full: bool) -> Optional[str]:
     if not urls:
         return None
 
-    def score(url: str) -> tuple[int, int, int]:
+    def score(url: str) -> tuple[int, int, int, int]:
         lower = url.lower()
         full_score = 0 if is_preview_media_url(url) else 1
+        # Prefer HLS master playlists (no quality digit) so yt-dlp picks
+        # the highest variant itself instead of us locking onto a single mp4.
+        is_master = 1 if (".m3u8" in lower and not re.search(r'(?<!\d)(2160|1440|1080|720|480|360)(?!\d)', lower)) else 0
         ext_score = 2 if ".m3u8" in lower else 1 if ".mp4" in lower else 0
         quality = max([int(q) for q in re.findall(r'(?<!\d)(2160|1440|1080|720|480|360)(?!\d)', lower)] or [0])
-        return (full_score, ext_score, quality)
+        return (full_score, is_master, quality, ext_score)
 
     return max(urls, key=score)
 
@@ -557,8 +586,11 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
                     data={"studioId": studio_id},
                     referer=page_url,
                 )
-                unlocked_media = best_media_url(media_urls_from_text(unlock_text), require_full=True)
+                unlock_state = parse_view_state(unlock_text)
+                unlock_urls = media_urls_from_text(unlock_text) + media_urls_from_state(unlock_state)
+                unlocked_media = best_media_url(unlock_urls, require_full=True)
                 if unlocked_media:
+                    logger.info("Faphouse unlock media chosen: %s", unlocked_media)
                     return ResolvedMedia(unlocked_media, page_title)
                 webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
                 page_title = faphouse_title_from_page(webpage, page_url) or page_title
@@ -577,11 +609,14 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
             "Premium cookies active na bole full video unlock hoyni. Fresh logged-in cookies.txt export kore retry korun."
         )
 
-    media_url = best_media_url(media_urls_from_text(webpage), require_full=require_premium or is_premium)
+    all_urls = media_urls_from_text(webpage) + media_urls_from_state(state)
+    media_url = best_media_url(all_urls, require_full=require_premium or is_premium)
     if (require_premium or is_premium) and not media_url:
         raise PremiumAccessError(
             "Faphouse page-e sudhu trailer/preview source paowa geche — full video source unlock hoyni. Fresh premium cookies.txt save kore retry korun."
         )
+    if media_url:
+        logger.info("Faphouse media chosen: %s (from %d candidates)", media_url, len(all_urls))
     return ResolvedMedia(media_url, page_title) if media_url else None
 
 
