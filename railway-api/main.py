@@ -123,6 +123,13 @@ class DownloadStatusOut(BaseModel):
     status: str
     result: Optional[DownloadOut] = None
     error: Optional[str] = None
+    phase: Optional[str] = None
+    download_progress: Optional[float] = None
+    upload_progress: Optional[float] = None
+    downloaded_bytes: Optional[int] = None
+    total_bytes: Optional[int] = None
+    uploaded_bytes: Optional[int] = None
+    upload_total_bytes: Optional[int] = None
 
 
 # ---------- Google Drive ----------
@@ -140,12 +147,13 @@ def get_drive_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def upload_to_drive(file_path: Path) -> dict:
+def upload_to_drive(file_path: Path, progress_cb=None) -> dict:
     service = get_drive_service()
     metadata = {"name": file_path.name}
     if GOOGLE_DRIVE_FOLDER_ID:
         metadata["parents"] = [GOOGLE_DRIVE_FOLDER_ID]
 
+    total_size = file_path.stat().st_size
     media = MediaFileUpload(
         str(file_path),
         resumable=True,
@@ -157,8 +165,19 @@ def upload_to_drive(file_path: Path) -> dict:
         fields="id, name, size, webViewLink, webContentLink",
     )
     response = None
+    if progress_cb:
+        try:
+            progress_cb("uploading", 0, total_size)
+        except Exception:
+            pass
     while response is None:
-        _, response = request.next_chunk()
+        status, response = request.next_chunk()
+        if progress_cb:
+            try:
+                uploaded = status.resumable_progress if status else (total_size if response else 0)
+                progress_cb("uploading", uploaded, total_size)
+            except Exception:
+                pass
 
     try:
         service.permissions().create(
@@ -968,6 +987,7 @@ def download_url(
     mode: str,
     quality: str,
     request_cookies: Optional[str] = None,
+    progress_cb=None,
 ) -> Path:
     # Per-request cookies (from the web app) take priority over the
     # server-wide YT_DLP_COOKIES env fallback. If neither is present
@@ -1005,6 +1025,21 @@ def download_url(
             return max(files, key=lambda p: p.stat().st_size)
 
     base_opts = build_ydl_opts(out_dir, mode, quality, cookies_path)
+    if progress_cb:
+        def _ydl_hook(d):
+            try:
+                if d.get("status") == "downloading":
+                    downloaded = int(d.get("downloaded_bytes") or 0)
+                    total = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+                    progress_cb("downloading", downloaded, total)
+                elif d.get("status") == "finished":
+                    total = int(d.get("total_bytes") or d.get("downloaded_bytes") or 0)
+                    progress_cb("processing", total, total)
+            except Exception:
+                pass
+        existing_hooks = list(base_opts.get("progress_hooks") or [])
+        existing_hooks.append(_ydl_hook)
+        base_opts["progress_hooks"] = existing_hooks
     last_error: Optional[Exception] = None
 
     for attempt_url in candidate_download_urls(url):
@@ -1090,16 +1125,18 @@ def download_url(
     raise RuntimeError("Download finished but no file found")
 
 
-def run_download_to_drive(body: DownloadIn) -> DownloadOut:
+def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
     tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
     try:
         t0 = time.time()
-        file_path = download_url(body.url, tmp_dir, body.mode, body.quality, body.cookies)
+        file_path = download_url(
+            body.url, tmp_dir, body.mode, body.quality, body.cookies, progress_cb=progress_cb
+        )
         size_mb = file_path.stat().st_size / (1024 * 1024)
         dl_secs = time.time() - t0
 
         t1 = time.time()
-        drive_file = upload_to_drive(file_path)
+        drive_file = upload_to_drive(file_path, progress_cb=progress_cb)
         up_secs = time.time() - t1
 
         return DownloadOut(
@@ -1143,20 +1180,62 @@ def cleanup_download_jobs() -> None:
 
 def run_download_job(job_id: str, body: DownloadIn) -> None:
     with _DOWNLOAD_JOBS_LOCK:
-        _DOWNLOAD_JOBS[job_id].update({"status": "running", "updated_at": time.time()})
-    try:
-        result = run_download_to_drive(body)
+        _DOWNLOAD_JOBS[job_id].update({
+            "status": "running",
+            "phase": "downloading",
+            "updated_at": time.time(),
+        })
+
+    def _progress(phase: str, current: int, total: int) -> None:
+        now = time.time()
         with _DOWNLOAD_JOBS_LOCK:
-            _DOWNLOAD_JOBS[job_id].update(
-                {"status": "done", "result": result, "error": None, "updated_at": time.time()}
-            )
+            job = _DOWNLOAD_JOBS.get(job_id)
+            if not job:
+                return
+            # Throttle: only push if >250ms since last update, unless phase changed
+            last = job.get("_last_progress_at", 0)
+            if phase == job.get("phase") and now - last < 0.25:
+                return
+            job["phase"] = phase
+            job["updated_at"] = now
+            job["_last_progress_at"] = now
+            if phase == "downloading":
+                job["downloaded_bytes"] = current
+                job["total_bytes"] = total or None
+                job["download_progress"] = (current / total) if total else None
+            elif phase == "uploading":
+                job["uploaded_bytes"] = current
+                job["upload_total_bytes"] = total or None
+                job["upload_progress"] = (current / total) if total else None
+                # Download is done once we start uploading
+                if job.get("download_progress", 0) and job["download_progress"] < 1:
+                    job["download_progress"] = 1.0
+            elif phase == "processing":
+                job["download_progress"] = 1.0
+
+    try:
+        result = run_download_to_drive(body, progress_cb=_progress)
+        with _DOWNLOAD_JOBS_LOCK:
+            _DOWNLOAD_JOBS[job_id].update({
+                "status": "done",
+                "result": result,
+                "error": None,
+                "phase": "done",
+                "download_progress": 1.0,
+                "upload_progress": 1.0,
+                "updated_at": time.time(),
+            })
     except Exception as e:
         logger.exception("download job failed: %s", job_id)
         detail = str(e).strip() or e.__class__.__name__
         with _DOWNLOAD_JOBS_LOCK:
-            _DOWNLOAD_JOBS[job_id].update(
-                {"status": "error", "result": None, "error": detail[:400], "updated_at": time.time()}
-            )
+            _DOWNLOAD_JOBS[job_id].update({
+                "status": "error",
+                "result": None,
+                "error": detail[:400],
+                "phase": "error",
+                "updated_at": time.time(),
+            })
 
 
 
@@ -1235,4 +1314,11 @@ def download_status(job_id: str, x_api_token: str = Header(None)):
             status=job["status"],
             result=job.get("result"),
             error=job.get("error"),
+            phase=job.get("phase"),
+            download_progress=job.get("download_progress"),
+            upload_progress=job.get("upload_progress"),
+            downloaded_bytes=job.get("downloaded_bytes"),
+            total_bytes=job.get("total_bytes"),
+            uploaded_bytes=job.get("uploaded_bytes"),
+            upload_total_bytes=job.get("upload_total_bytes"),
         )

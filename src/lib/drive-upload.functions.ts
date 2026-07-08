@@ -35,14 +35,24 @@ export type DriveStartResult =
   | { kind: "success"; jobId: string; status: string }
   | { kind: "error"; message: string };
 
+export type DriveJobProgress = {
+  phase?: string | null;
+  downloadProgress?: number | null;
+  uploadProgress?: number | null;
+  downloadedBytes?: number | null;
+  totalBytes?: number | null;
+  uploadedBytes?: number | null;
+  uploadTotalBytes?: number | null;
+};
+
 export type DriveJobStatusResult =
-  | {
+  | ({
       kind: "success";
       jobId: string;
       status: "queued" | "running" | "done" | "error";
       result?: Exclude<DriveResult, { kind: "error" }>;
       error?: string;
-    }
+    } & DriveJobProgress)
   | { kind: "error"; message: string };
 
 export type CookieCheckResult =
@@ -289,12 +299,26 @@ export const getDriveJobStatus = createServerFn({ method: "GET" })
           file_id: string;
         } | null;
         error?: string | null;
+        phase?: string | null;
+        download_progress?: number | null;
+        upload_progress?: number | null;
+        downloaded_bytes?: number | null;
+        total_bytes?: number | null;
+        uploaded_bytes?: number | null;
+        upload_total_bytes?: number | null;
       };
       return {
         kind: "success",
         jobId: p.job_id,
         status: p.status,
         error: p.error ?? undefined,
+        phase: p.phase ?? undefined,
+        downloadProgress: p.download_progress ?? undefined,
+        uploadProgress: p.upload_progress ?? undefined,
+        downloadedBytes: p.downloaded_bytes ?? undefined,
+        totalBytes: p.total_bytes ?? undefined,
+        uploadedBytes: p.uploaded_bytes ?? undefined,
+        uploadTotalBytes: p.upload_total_bytes ?? undefined,
         result: p.result
           ? {
               kind: "success",

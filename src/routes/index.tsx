@@ -107,6 +107,13 @@ type Job = {
   result?: DriveResult | { kind: "link"; url: string; filename?: string | null };
   error?: string;
   cookieDomain?: string;
+  phase?: string;
+  downloadProgress?: number;
+  uploadProgress?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  uploadedBytes?: number;
+  uploadTotalBytes?: number;
 };
 
 function Home() {
@@ -146,13 +153,22 @@ function Home() {
 
         const pollStartedAt = Date.now();
         while (Date.now() - pollStartedAt < 15 * 60 * 1000) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
           const status = await getDriveStatusFn({ data: { jobId: started.jobId } });
           if (status.kind === "error") {
             updateJob(job.id, { status: "error", endedAt: Date.now(), error: status.message });
             toast.error(status.message);
             return;
           }
+          updateJob(job.id, {
+            phase: status.phase ?? undefined,
+            downloadProgress: status.downloadProgress ?? undefined,
+            uploadProgress: status.uploadProgress ?? undefined,
+            downloadedBytes: status.downloadedBytes ?? undefined,
+            totalBytes: status.totalBytes ?? undefined,
+            uploadedBytes: status.uploadedBytes ?? undefined,
+            uploadTotalBytes: status.uploadTotalBytes ?? undefined,
+          });
           if (status.status === "done" && status.result) {
             updateJob(job.id, { status: "done", endedAt: Date.now(), result: status.result });
             toast.success("Drive-e upload complete!", { description: status.result.name });
@@ -685,18 +701,39 @@ function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
     Math.floor(((job.endedAt ?? Date.now()) - job.startedAt) / 1000),
   );
 
+  const formatBytes = (b?: number) => {
+    if (!b || b <= 0) return "";
+    if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+    if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const dlPct =
+    job.downloadProgress != null ? Math.round(job.downloadProgress * 100) : null;
+  const upPct =
+    job.uploadProgress != null ? Math.round(job.uploadProgress * 100) : null;
+  const activePhase = job.phase;
+  const isUploading = activePhase === "uploading";
+  const isDownloading = activePhase === "downloading" || activePhase === "processing";
+
   const phaseText =
     job.status === "running"
       ? job.toDrive
-        ? elapsed < 30
-          ? "Downloading from source…"
-          : "Uploading to Google Drive…"
+        ? isUploading
+          ? `Uploading to Drive${upPct != null ? ` · ${upPct}%` : "…"}`
+          : isDownloading
+            ? `Downloading${dlPct != null ? ` · ${dlPct}%` : "…"}`
+            : "Preparing…"
         : "Fetching link…"
       : job.status === "done"
         ? "Complete"
         : job.status === "error"
           ? "Failed"
           : "Queued";
+
+  const activePct = isUploading ? upPct : dlPct;
+  const activeCurrent = isUploading ? job.uploadedBytes : job.downloadedBytes;
+  const activeTotal = isUploading ? job.uploadTotalBytes : job.totalBytes;
 
   return (
     <div className="glass-card rounded-xl p-4">
@@ -730,8 +767,57 @@ function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
           </div>
 
           {job.status === "running" && (
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full w-1/3 animate-[progress_1.4s_ease-in-out_infinite] rounded-full bg-primary" />
+            <div className="mt-3 space-y-2">
+              {job.toDrive && (dlPct != null || upPct != null) ? (
+                <>
+                  <div>
+                    <div className="mb-1 flex justify-between text-[11px] text-muted-foreground">
+                      <span>Download</span>
+                      <span>
+                        {dlPct != null ? `${dlPct}%` : "—"}
+                        {job.totalBytes
+                          ? ` · ${formatBytes(job.downloadedBytes)} / ${formatBytes(job.totalBytes)}`
+                          : job.downloadedBytes
+                            ? ` · ${formatBytes(job.downloadedBytes)}`
+                            : ""}
+                      </span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-300"
+                        style={{ width: `${dlPct ?? 0}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-1 flex justify-between text-[11px] text-muted-foreground">
+                      <span>Upload to Drive</span>
+                      <span>
+                        {upPct != null ? `${upPct}%` : "—"}
+                        {job.uploadTotalBytes
+                          ? ` · ${formatBytes(job.uploadedBytes)} / ${formatBytes(job.uploadTotalBytes)}`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-300"
+                        style={{ width: `${upPct ?? 0}%` }}
+                      />
+                    </div>
+                  </div>
+                  {activePct == null && activeCurrent ? (
+                    <div className="text-[11px] text-muted-foreground">
+                      {formatBytes(activeCurrent)}
+                      {activeTotal ? ` / ${formatBytes(activeTotal)}` : ""}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full w-1/3 animate-[progress_1.4s_ease-in-out_infinite] rounded-full bg-primary" />
+                </div>
+              )}
             </div>
           )}
 
