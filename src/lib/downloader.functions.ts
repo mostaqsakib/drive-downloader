@@ -2,15 +2,15 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { vpsFetch, type Job } from "./downloader.server";
 
-const QUALITIES = ["best", "1080p", "720p", "480p", "audio"] as const;
-
-const submitSchema = z.object({
-  url: z.string().trim().url({ message: "Valid URL diben" }).max(2048),
-  quality: z.enum(QUALITIES),
-});
-
 export const submitJob = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => submitSchema.parse(data))
+  .inputValidator((data: unknown) =>
+    z
+      .object({
+        url: z.string().trim().url({ message: "Valid URL diben" }).max(2048),
+        quality: z.enum(["best", "1080p", "720p", "480p", "audio"]),
+      })
+      .parse(data),
+  )
   .handler(async ({ data }) => {
     return vpsFetch<Job>("/jobs", {
       method: "POST",
@@ -23,7 +23,9 @@ export const listJobs = createServerFn({ method: "GET" }).handler(async () => {
 });
 
 export const deleteJob = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(data))
+  .inputValidator((data: unknown) =>
+    z.object({ id: z.string().min(1).max(64) }).parse(data),
+  )
   .handler(async ({ data }) => {
     return vpsFetch<{ ok: true }>(`/jobs/${encodeURIComponent(data.id)}`, {
       method: "DELETE",
