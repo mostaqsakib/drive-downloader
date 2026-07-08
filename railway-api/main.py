@@ -232,7 +232,7 @@ def download_url(
     base_opts = build_ydl_opts(out_dir, mode, quality, cookies_path)
     last_error: Optional[Exception] = None
 
-    for attempt_url in candidate_download_urls(url):
+    for attempt_url in candidate_download_urls(url, prefer_mirror=cookies_path is not None):
         try:
             result = _run(attempt_url, base_opts)
             if result:
