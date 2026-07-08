@@ -49,6 +49,11 @@ ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()
 ] or ["*"]
 SESSION_COOKIE_EXPIRES = 4102444799  # 2099-12-31: keep browser session cookies usable in server-side requests
+DEFAULT_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 
 # In-memory cache: cookies_text keyed by email, with expiry timestamp
 _FAPHOUSE_LOGIN_CACHE: dict[str, tuple[str, float]] = {}
@@ -474,13 +479,14 @@ def request_with_cookiefile(
 
     payload = json.dumps(data).encode("utf-8") if data is not None else None
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/128.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": DEFAULT_BROWSER_UA,
         "Accept-Language": "en-US,en;q=0.9",
         "Accept": "application/json, text/plain, */*" if data is not None else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Fetch-Dest": "document" if data is None else "empty",
+        "Sec-Fetch-Mode": "navigate" if data is None else "cors",
+        "Sec-Fetch-Site": "same-origin" if referer else "none",
     }
     if referer:
         headers["Referer"] = referer
@@ -753,12 +759,11 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "retries": 5,
         "fragment_retries": 5,
         "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/128.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": DEFAULT_BROWSER_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         },
     }
     if merge:
@@ -768,6 +773,55 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
     if cookies_path:
         opts["cookiefile"] = str(cookies_path)
     return opts
+
+
+def opts_with_page_headers(opts: dict, page_url: str) -> dict:
+    """Return yt-dlp options with browser-like headers tied to the source page.
+
+    Some hosts reject generic server requests unless the page/video request has
+    a realistic Referer/Origin pair. Keep this per-attempt so mirror hosts get
+    their own origin instead of reusing the original pasted URL.
+    """
+    origin = faphouse_origin(page_url)
+    return {
+        **opts,
+        "http_headers": {
+            **opts.get("http_headers", {}),
+            "Referer": page_url,
+            "Origin": origin,
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Dest": "document",
+        },
+    }
+
+
+def generic_impersonation_opts(opts: dict, target: str) -> dict:
+    """Enable yt-dlp's generic extractor browser impersonation correctly.
+
+    The generic extractor reads impersonation from extractor_args for the page
+    fetch. Top-level impersonate helps later media requests, but it alone does
+    not fix Cloudflare 403 on the initial webpage.
+    """
+    extractor_args = {
+        key: dict(value) if isinstance(value, dict) else value
+        for key, value in opts.get("extractor_args", {}).items()
+    }
+    generic_args = dict(extractor_args.get("generic", {}))
+    generic_args["impersonate"] = [target]
+    extractor_args["generic"] = generic_args
+    return {**opts, "force_generic_extractor": True, "extractor_args": extractor_args}
+
+
+def human_download_error(error: Exception) -> str:
+    text = str(error).strip() or error.__class__.__name__
+    lower = text.lower()
+    if "http error 403" in lower or "cloudflare" in lower:
+        return (
+            "Site Cloudflare/403 diye server request block korche. Browser theke fresh logged-in cookies save kore retry korun; "
+            f"original error: {text}"
+        )
+    return text
 
 
 def _serialize_cookiejar(jar: http.cookiejar.CookieJar) -> Optional[str]:
