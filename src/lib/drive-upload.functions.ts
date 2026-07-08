@@ -35,14 +35,24 @@ export type DriveStartResult =
   | { kind: "success"; jobId: string; status: string }
   | { kind: "error"; message: string };
 
+export type DriveJobProgress = {
+  phase?: string | null;
+  downloadProgress?: number | null;
+  uploadProgress?: number | null;
+  downloadedBytes?: number | null;
+  totalBytes?: number | null;
+  uploadedBytes?: number | null;
+  uploadTotalBytes?: number | null;
+};
+
 export type DriveJobStatusResult =
-  | {
+  | ({
       kind: "success";
       jobId: string;
       status: "queued" | "running" | "done" | "error";
       result?: Exclude<DriveResult, { kind: "error" }>;
       error?: string;
-    }
+    } & DriveJobProgress)
   | { kind: "error"; message: string };
 
 export type CookieCheckResult =
