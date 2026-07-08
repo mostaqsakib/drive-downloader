@@ -1025,6 +1025,21 @@ def download_url(
             return max(files, key=lambda p: p.stat().st_size)
 
     base_opts = build_ydl_opts(out_dir, mode, quality, cookies_path)
+    if progress_cb:
+        def _ydl_hook(d):
+            try:
+                if d.get("status") == "downloading":
+                    downloaded = int(d.get("downloaded_bytes") or 0)
+                    total = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+                    progress_cb("downloading", downloaded, total)
+                elif d.get("status") == "finished":
+                    total = int(d.get("total_bytes") or d.get("downloaded_bytes") or 0)
+                    progress_cb("processing", total, total)
+            except Exception:
+                pass
+        existing_hooks = list(base_opts.get("progress_hooks") or [])
+        existing_hooks.append(_ydl_hook)
+        base_opts["progress_hooks"] = existing_hooks
     last_error: Optional[Exception] = None
 
     for attempt_url in candidate_download_urls(url):
