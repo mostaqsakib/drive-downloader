@@ -382,7 +382,198 @@ function Home() {
   );
 }
 
-function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
+function CookieManager({ currentUrl }: { currentUrl: string }) {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<CookieEntry[]>([]);
+  const [domain, setDomain] = useState("");
+  const [label, setLabel] = useState("");
+  const [cookies, setCookies] = useState("");
+
+  useEffect(() => {
+    if (open) setEntries(loadCookies());
+  }, [open]);
+
+  // Auto-suggest the domain based on the URL the user is about to submit.
+  useEffect(() => {
+    if (!open) return;
+    const host = hostFromUrl(currentUrl);
+    if (host && !domain) setDomain(host);
+  }, [open, currentUrl, domain]);
+
+  const persist = (next: CookieEntry[]) => {
+    setEntries(next);
+    saveCookies(next);
+  };
+
+  const addOrUpdate = () => {
+    const d = canonicalHost(domain.trim());
+    const c = cookies.trim();
+    if (!d) return toast.error("Domain diben (e.g. youtube.com)");
+    if (!c) return toast.error("Cookies text paste koren");
+    if (!/^#|\t/m.test(c)) {
+      toast.warning("Ei text Netscape cookies.txt format er moto lagche na — tobuo save korchi");
+    }
+    const next: CookieEntry[] = [
+      ...entries.filter((e) => e.domain !== d),
+      { domain: d, label: label.trim() || undefined, cookies: c, updatedAt: Date.now() },
+    ].sort((a, b) => a.domain.localeCompare(b.domain));
+    persist(next);
+    setDomain("");
+    setLabel("");
+    setCookies("");
+    toast.success(`${d} — cookies saved`);
+  };
+
+  const remove = (d: string) => {
+    persist(entries.filter((e) => e.domain !== d));
+  };
+
+  const editExisting = (e: CookieEntry) => {
+    setDomain(e.domain);
+    setLabel(e.label ?? "");
+    setCookies(e.cookies);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-2">
+          <Cookie className="h-4 w-4" />
+          Cookies
+          {entries.length > 0 && (
+            <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">
+              {entries.length}
+            </Badge>
+          )}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-primary" />
+            Cookie vault (premium sites)
+          </DialogTitle>
+          <DialogDescription>
+            Premium / login-locked site (Patreon, private YouTube, Fansly, etc.) er jonno
+            <strong className="text-foreground"> Netscape cookies.txt </strong>
+            paste koren. Domain match hole shei cookies auto-attach hobe.
+            Data shudhu apnar browser-e thake.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="mt-2 rounded-lg border border-border/60 bg-background/40 p-3 text-xs text-muted-foreground">
+          <div className="mb-1 font-medium text-foreground">Kivabe cookies bar korben?</div>
+          Chrome/Firefox-e{" "}
+          <a
+            href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline"
+          >
+            "Get cookies.txt LOCALLY"
+          </a>{" "}
+          extension install koren → site-e login thakle icon click → Export → shei text
+          niche paste koren.
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="ck-domain" className="text-xs">
+                Domain
+              </Label>
+              <Input
+                id="ck-domain"
+                placeholder="youtube.com"
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                className="mt-1 h-9"
+              />
+            </div>
+            <div>
+              <Label htmlFor="ck-label" className="text-xs">
+                Label (optional)
+              </Label>
+              <Input
+                id="ck-label"
+                placeholder="My premium account"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                className="mt-1 h-9"
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="ck-text" className="text-xs">
+              cookies.txt content
+            </Label>
+            <Textarea
+              id="ck-text"
+              placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;..."
+              value={cookies}
+              onChange={(e) => setCookies(e.target.value)}
+              className="mt-1 min-h-[140px] font-mono text-xs"
+            />
+          </div>
+          <Button onClick={addOrUpdate} className="w-full">
+            {entries.some((e) => e.domain === canonicalHost(domain.trim()))
+              ? "Update cookies"
+              : "Save cookies"}
+          </Button>
+        </div>
+
+        {entries.length > 0 && (
+          <div className="mt-6">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">
+              Saved ({entries.length})
+            </div>
+            <div className="flex flex-col gap-2">
+              {entries.map((e) => (
+                <div
+                  key={e.domain}
+                  className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{e.domain}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {e.label ?? "—"} • {(e.cookies.length / 1024).toFixed(1)} KB •{" "}
+                      {new Date(e.updatedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => editExisting(e)}
+                      className="h-8"
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => remove(e.domain)}
+                      className="h-8 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="mt-4">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
   const [, tick] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
