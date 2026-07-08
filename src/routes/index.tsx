@@ -574,7 +574,9 @@ function CookieManager({ currentUrl }: { currentUrl: string }) {
   );
 }
 
+function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
   const [, tick] = useState(0);
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
