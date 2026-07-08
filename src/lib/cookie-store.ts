@@ -12,6 +12,15 @@ export type CookieEntry = {
   updatedAt: number;
 };
 
+export type CookieSummary = {
+  totalRows: number;
+  activeRows: number;
+  expiredRows: number;
+  sessionRows: number;
+  domains: string[];
+  earliestExpiry?: number;
+};
+
 export function loadCookies(): CookieEntry[] {
   if (typeof window === "undefined") return [];
   try {
@@ -69,13 +78,54 @@ function cookieTextDomains(cookies: string): string[] {
   const domains = new Set<string>();
   for (const rawLine of cookies.split(/\r?\n/)) {
     const line = rawLine.replace(/^#HttpOnly_/, "");
-    if (!line || line.startsWith("#") || !line.includes("\t")) continue;
-    const domain = canonicalHost(line.split("\t")[0] ?? "");
-    if (domain) {
+    if (!line || line.startsWith("#")) continue;
+    const tabDomain = line.includes("\t") ? (line.split("\t")[0] ?? "") : "";
+    const setCookieDomain = /(?:^|;)\s*domain=([^;\s]+)/i.exec(line)?.[1] ?? "";
+    const domain = canonicalHost(tabDomain || setCookieDomain);
+    if (domain && domain.includes(".")) {
       for (const alias of mirrorAliases(domain)) domains.add(alias);
     }
   }
   return [...domains];
+}
+
+export function summarizeCookies(cookies: string): CookieSummary {
+  const now = Math.floor(Date.now() / 1000);
+  const domains = new Set<string>();
+  let totalRows = 0;
+  let activeRows = 0;
+  let expiredRows = 0;
+  let sessionRows = 0;
+  let earliestExpiry: number | undefined;
+
+  for (const rawLine of cookies.split(/\r?\n/)) {
+    const line = rawLine.replace(/^#HttpOnly_/, "");
+    if (!line || line.startsWith("#") || !line.includes("\t")) continue;
+    const parts = line.split("\t");
+    if (parts.length < 7) continue;
+    totalRows += 1;
+    const domain = canonicalHost(parts[0] ?? "");
+    if (domain) domains.add(domain);
+    const expiry = Number(parts[4] ?? 0);
+    if (!Number.isFinite(expiry) || expiry <= 0) {
+      sessionRows += 1;
+      activeRows += 1;
+    } else if (expiry < now) {
+      expiredRows += 1;
+    } else {
+      activeRows += 1;
+      earliestExpiry = earliestExpiry ? Math.min(earliestExpiry, expiry) : expiry;
+    }
+  }
+
+  return {
+    totalRows,
+    activeRows,
+    expiredRows,
+    sessionRows,
+    domains: [...domains].sort(),
+    earliestExpiry,
+  };
 }
 
 export function hostFromUrl(url: string): string | null {

@@ -56,7 +56,12 @@ class DownloadIn(BaseModel):
     url: str = Field(..., min_length=4, max_length=2048)
     mode: str = Field("auto", pattern="^(auto|audio|mute)$")
     quality: str = Field("1080", pattern="^(max|1080|720|480|360)$")
-    cookies: Optional[str] = Field(None, max_length=200_000)
+    cookies: Optional[str] = Field(None, max_length=1_000_000)
+
+
+class CookieCheckIn(BaseModel):
+    url: str = Field(..., min_length=4, max_length=2048)
+    cookies: Optional[str] = Field(None, max_length=1_000_000)
 
 
 
@@ -68,6 +73,18 @@ class DownloadOut(BaseModel):
     upload_seconds: float
     view_link: Optional[str] = None
     file_id: str
+
+
+class CookieCheckOut(BaseModel):
+    ok: bool
+    status: str
+    message: str
+    matched_cookie_rows: int = 0
+    active_cookie_rows: int = 0
+    expired_cookie_rows: int = 0
+    premium: Optional[bool] = None
+    allowed: Optional[bool] = None
+    login_detected: Optional[bool] = None
 
 
 # ---------- Google Drive ----------
@@ -198,6 +215,44 @@ def is_unsupported_error(error: Exception) -> bool:
 def is_faphouse_url(url: str) -> bool:
     host = urlsplit(normalize_download_url(url)).netloc.lower().removeprefix("www.")
     return host in {"faphouse.com", "faphouse2.com"}
+
+
+def cookie_domain_matches(cookie_domain: str, host: str) -> bool:
+    domain_aliases = mirror_host_aliases(cookie_domain)
+    host_aliases = mirror_host_aliases(host)
+    return any(
+        h == d or h.endswith("." + d) or d.endswith("." + h)
+        for h in host_aliases
+        for d in domain_aliases
+    )
+
+
+def cookie_row_stats(cookies_text: str, url: str) -> dict[str, int]:
+    host = urlsplit(normalize_download_url(url)).netloc.lower().removeprefix("www.")
+    now = int(time.time())
+    matched = 0
+    active = 0
+    expired = 0
+    for raw_line in cookies_text.splitlines():
+        line = raw_line.removeprefix("#HttpOnly_")
+        if not line or line.startswith("#") or "\t" not in line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        domain = parts[0].strip().lstrip(".").lower().removeprefix("www.")
+        if not domain or not cookie_domain_matches(domain, host):
+            continue
+        matched += 1
+        try:
+            expires = int(float(parts[4]))
+        except ValueError:
+            expires = 0
+        if expires and expires < now:
+            expired += 1
+        else:
+            active += 1
+    return {"matched": matched, "active": active, "expired": expired}
 
 
 def faphouse_origin(url: str) -> str:
@@ -356,6 +411,86 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
     return media_url
 
 
+def check_cookie_access(url: str, cookies_text: Optional[str]) -> CookieCheckOut:
+    page_url = normalize_download_url(url)
+    stats = cookie_row_stats(cookies_text or "", page_url)
+    if not cookies_text:
+        return CookieCheckOut(
+            ok=False,
+            status="missing",
+            message="Ei URL-er jonno kono cookies attach hoyni — domain match koreni ba Cookie vault-e save nei.",
+        )
+    if stats["matched"] == 0:
+        return CookieCheckOut(
+            ok=False,
+            status="domain_mismatch",
+            message="Cookies ache, kintu ei URL-er domain-er sathe kono cookie row match koreni.",
+            matched_cookie_rows=0,
+            active_cookie_rows=0,
+            expired_cookie_rows=stats["expired"],
+        )
+    if stats["active"] == 0:
+        return CookieCheckOut(
+            ok=False,
+            status="expired",
+            message="Matching cookie rows shob expired — site-e abar login kore fresh cookies.txt export korun.",
+            matched_cookie_rows=stats["matched"],
+            active_cookie_rows=stats["active"],
+            expired_cookie_rows=stats["expired"],
+        )
+
+    with tempfile.TemporaryDirectory(prefix="ck_") as tmp:
+        cookies_path = Path(tmp) / "cookies.txt"
+        cookies_path.write_text(expand_cookie_domains(cookies_text), encoding="utf-8")
+        try:
+            webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
+        except urllib.error.HTTPError as e:
+            if e.code in {401, 403}:
+                return CookieCheckOut(
+                    ok=False,
+                    status="rejected",
+                    message="Site cookies reject koreche — expired, logged-out, ba wrong account hote pare.",
+                    matched_cookie_rows=stats["matched"],
+                    active_cookie_rows=stats["active"],
+                    expired_cookie_rows=stats["expired"],
+                )
+            raise
+
+    state = parse_view_state(webpage)
+    video = state.get("video") if isinstance(state.get("video"), dict) else {}
+    is_premium = video.get("videoAccessType") == "premium"
+    is_allowed = bool(video.get("videoViewAllowed")) if video else None
+    login_detected = any(
+        token in webpage.lower()
+        for token in ("logout", "sign out", "my profile", "subscription", "account-menu")
+    )
+
+    if is_premium and is_allowed is False:
+        return CookieCheckOut(
+            ok=False,
+            status="no_premium_access",
+            message="Cookies active/matched, kintu ei premium video account-e unlock allowed na — wrong account, expired login, ba premium subscription nei.",
+            matched_cookie_rows=stats["matched"],
+            active_cookie_rows=stats["active"],
+            expired_cookie_rows=stats["expired"],
+            premium=True,
+            allowed=False,
+            login_detected=login_detected,
+        )
+
+    return CookieCheckOut(
+        ok=True,
+        status="ok",
+        message="Cookies domain-e match koreche ebong site page access test pass koreche.",
+        matched_cookie_rows=stats["matched"],
+        active_cookie_rows=stats["active"],
+        expired_cookie_rows=stats["expired"],
+        premium=is_premium if video else None,
+        allowed=is_allowed,
+        login_detected=login_detected,
+    )
+
+
 def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optional[Path]) -> dict:
     if mode == "audio":
         fmt = "bestaudio/best"
@@ -498,6 +633,18 @@ def download_url(
 @app.get("/")
 def health():
     return {"ok": True, "service": "drivegrabber-api"}
+
+
+@app.post("/cookies/check", response_model=CookieCheckOut)
+def check_cookies(body: CookieCheckIn, x_api_token: str = Header(None)):
+    if not x_api_token or x_api_token != API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        return check_cookie_access(body.url, body.cookies)
+    except Exception as e:
+        logger.exception("cookie check failed")
+        detail = str(e).strip() or e.__class__.__name__
+        raise HTTPException(status_code=500, detail=detail[:400])
 
 
 @app.post("/download", response_model=DownloadOut)

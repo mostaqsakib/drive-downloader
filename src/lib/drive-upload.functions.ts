@@ -5,7 +5,12 @@ const inputSchema = z.object({
   url: z.string().trim().url({ message: "Valid URL diben" }).max(2048),
   mode: z.enum(["auto", "audio", "mute"]).default("auto"),
   quality: z.enum(["max", "1080", "720", "480", "360"]).default("1080"),
-  cookies: z.string().max(200_000).optional(),
+  cookies: z.string().max(1_000_000).optional(),
+});
+
+const cookieCheckSchema = z.object({
+  url: z.string().trim().url({ message: "Valid URL diben" }).max(2048),
+  cookies: z.string().max(1_000_000).optional(),
 });
 
 
@@ -20,6 +25,82 @@ export type DriveResult =
       fileId: string;
     }
   | { kind: "error"; message: string };
+
+export type CookieCheckResult =
+  | {
+      kind: "success";
+      ok: boolean;
+      status: string;
+      message: string;
+      matchedRows: number;
+      activeRows: number;
+      expiredRows: number;
+      premium?: boolean | null;
+      allowed?: boolean | null;
+      loginDetected?: boolean | null;
+    }
+  | { kind: "error"; message: string };
+
+export const checkCookieAccess = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => cookieCheckSchema.parse(data))
+  .handler(async ({ data }): Promise<CookieCheckResult> => {
+    const base = process.env.RAILWAY_API_URL?.replace(/\/+$/, "");
+    const token = process.env.API_SECRET_TOKEN;
+    if (!base || !token) {
+      return {
+        kind: "error",
+        message: "Server-e RAILWAY_API_URL ba API_SECRET_TOKEN set nei.",
+      };
+    }
+
+    try {
+      const res = await fetch(`${base}/cookies/check`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Api-Token": token,
+        },
+        body: JSON.stringify(data),
+      });
+      const bodyText = await res.text();
+      let payload: unknown;
+      try {
+        payload = bodyText ? JSON.parse(bodyText) : null;
+      } catch {
+        return { kind: "error", message: `API ${res.status}: ${bodyText.slice(0, 200)}` };
+      }
+      if (!res.ok) {
+        const detailValue = (payload as { detail?: unknown } | null)?.detail;
+        const detail = typeof detailValue === "string" ? detailValue : JSON.stringify(detailValue);
+        return { kind: "error", message: `Railway API: ${detail || `HTTP ${res.status}`}` };
+      }
+      const p = payload as {
+        ok: boolean;
+        status: string;
+        message: string;
+        matched_cookie_rows: number;
+        active_cookie_rows: number;
+        expired_cookie_rows: number;
+        premium?: boolean | null;
+        allowed?: boolean | null;
+        login_detected?: boolean | null;
+      };
+      return {
+        kind: "success",
+        ok: p.ok,
+        status: p.status,
+        message: p.message,
+        matchedRows: p.matched_cookie_rows,
+        activeRows: p.active_cookie_rows,
+        expiredRows: p.expired_cookie_rows,
+        premium: p.premium,
+        allowed: p.allowed,
+        loginDetected: p.login_detected,
+      };
+    } catch (e) {
+      return { kind: "error", message: `Network: ${(e as Error).message}` };
+    }
+  });
 
 export const saveToDrive = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => inputSchema.parse(data))
