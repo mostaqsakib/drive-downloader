@@ -18,6 +18,7 @@ import {
   KeyRound,
   Trash2,
   Cookie,
+  RotateCcw,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -126,6 +127,47 @@ function Home() {
   const quality: Quality = "max";
   const [toDrive, setToDrive] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Load persisted history on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("dg_jobs_v1");
+      if (raw) {
+        const parsed = JSON.parse(raw) as Job[];
+        // Any in-flight jobs from a previous session can't be resumed —
+        // mark them failed so the user can retry.
+        const restored = parsed.map((j) =>
+          j.status === "running" || j.status === "queued"
+            ? {
+                ...j,
+                status: "error" as JobStatus,
+                endedAt: j.endedAt ?? Date.now(),
+                error:
+                  j.error ||
+                  "Page reload hoyeche — job er progress hariye geche. Retry koren.",
+              }
+            : j,
+        );
+        setJobs(restored);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+    setHydrated(true);
+  }, []);
+
+  // Persist to localStorage whenever jobs change (after hydration)
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      // Cap at 200 items to keep storage sane
+      const trimmed = jobs.slice(0, 200);
+      localStorage.setItem("dg_jobs_v1", JSON.stringify(trimmed));
+    } catch {
+      // quota exceeded — ignore
+    }
+  }, [jobs, hydrated]);
 
   const updateJob = (id: string, patch: Partial<Job>) =>
     setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
@@ -252,6 +294,26 @@ function Home() {
     setJobs((prev) => prev.filter((j) => j.id !== id));
   const clearFinished = () =>
     setJobs((prev) => prev.filter((j) => j.status === "running" || j.status === "queued"));
+  const clearHistory = () => {
+    if (!confirm("Puro history mucbe? Running jobs thakbe.")) return;
+    setJobs((prev) => prev.filter((j) => j.status === "running" || j.status === "queued"));
+  };
+  const retryJob = (id: string) => {
+    const old = jobs.find((j) => j.id === id);
+    if (!old) return;
+    const retried: Job = {
+      id: crypto.randomUUID(),
+      url: old.url,
+      mode: old.mode,
+      quality: old.quality,
+      toDrive: old.toDrive,
+      status: "queued",
+      startedAt: Date.now(),
+    };
+    // Replace failed job with fresh queued one at the same spot
+    setJobs((prev) => prev.map((j) => (j.id === id ? retried : j)));
+    void startJob(retried);
+  };
 
   const activeCount = jobs.filter((j) => j.status === "running").length;
 
@@ -365,21 +427,36 @@ function Home() {
                       {activeCount} running • {jobs.length} total
                     </>
                   ) : (
-                    <>{jobs.length} job{jobs.length > 1 ? "s" : ""}</>
+                    <>History: {jobs.length} item{jobs.length > 1 ? "s" : ""}</>
                   )}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearFinished}
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Clear finished
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFinished}
+                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Clear finished
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearHistory}
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                  >
+                    Clear history
+                  </Button>
+                </div>
               </div>
               <div className="flex flex-col gap-3">
                 {jobs.map((j) => (
-                  <JobCard key={j.id} job={j} onRemove={() => removeJob(j.id)} />
+                  <JobCard
+                    key={j.id}
+                    job={j}
+                    onRemove={() => removeJob(j.id)}
+                    onRetry={() => retryJob(j.id)}
+                  />
                 ))}
               </div>
             </div>
@@ -682,7 +759,15 @@ function CookieEntryRow({
   );
 }
 
-function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
+function JobCard({
+  job,
+  onRemove,
+  onRetry,
+}: {
+  job: Job;
+  onRemove: () => void;
+  onRetry: () => void;
+}) {
   const [, tick] = useState(0);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -859,8 +944,19 @@ function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
             </div>
           )}
 
-          {job.status === "error" && job.error && (
-            <div className="mt-2 text-xs text-destructive">{job.error}</div>
+          {job.status === "error" && (
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1 text-xs text-destructive">
+                {job.error || "Failed"}
+              </div>
+              <Button
+                size="sm"
+                onClick={onRetry}
+                className="h-8 shrink-0 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Retry
+              </Button>
+            </div>
           )}
         </div>
         <button
