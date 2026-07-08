@@ -653,9 +653,17 @@ def download_url(
     request_cookies: Optional[str] = None,
 ) -> Path:
     # Per-request cookies (from the web app) take priority over the
-    # server-wide YT_DLP_COOKIES env fallback.
+    # server-wide YT_DLP_COOKIES env fallback. If neither is present
+    # and this is a Faphouse URL, try auto-login with FAPHOUSE_EMAIL/PASSWORD.
     cookies_path = None
     cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
+    if not cookies_text and is_faphouse_url(url) and FAPHOUSE_EMAIL and FAPHOUSE_PASSWORD:
+        try:
+            cookies_text = faphouse_login_cookies(FAPHOUSE_EMAIL, FAPHOUSE_PASSWORD)
+            if cookies_text:
+                logger.info("Using Faphouse auto-login cookies for %s", url)
+        except Exception as e:
+            logger.warning("Faphouse auto-login failed: %s", e)
     if cookies_text:
         cookies_path = out_dir / "cookies.txt"
         cookies_path.write_text(expand_cookie_domains(cookies_text), encoding="utf-8")
