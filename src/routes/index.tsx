@@ -44,13 +44,19 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { fetchDownload } from "@/lib/downloader.functions";
-import { saveToDrive, type DriveResult } from "@/lib/drive-upload.functions";
+import {
+  checkCookieAccess,
+  saveToDrive,
+  type CookieCheckResult,
+  type DriveResult,
+} from "@/lib/drive-upload.functions";
 import {
   canonicalHost,
   hostFromUrl,
   loadCookies,
   pickCookiesFor,
   saveCookies,
+  summarizeCookies,
   type CookieEntry,
 } from "@/lib/cookie-store";
 
@@ -106,6 +112,7 @@ type Job = {
   endedAt?: number;
   result?: DriveResult | { kind: "link"; url: string; filename?: string | null };
   error?: string;
+  cookieDomain?: string;
 };
 
 function Home() {
@@ -125,7 +132,9 @@ function Home() {
     updateJob(job.id, { status: "running", startedAt: Date.now() });
     try {
       if (job.toDrive) {
-        const cookies = pickCookiesFor(job.url)?.cookies;
+        const matchedCookies = pickCookiesFor(job.url);
+        const cookies = matchedCookies?.cookies;
+        updateJob(job.id, { cookieDomain: matchedCookies?.domain ?? "none" });
         const r = await driveFn({
           data: { url: job.url, mode: job.mode, quality: job.quality, cookies },
         });
