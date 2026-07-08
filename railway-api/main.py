@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import yt_dlp
 from fastapi import FastAPI, Header, HTTPException
@@ -112,6 +113,37 @@ def upload_to_drive(file_path: Path) -> dict:
 
 # ---------- yt-dlp ----------
 
+def normalize_download_url(url: str) -> str:
+    """Clean browser-only fragments and add a scheme when users paste bare URLs."""
+    cleaned = url.strip()
+    if cleaned.startswith("//"):
+        cleaned = f"https:{cleaned}"
+    elif "://" not in cleaned:
+        cleaned = f"https://{cleaned}"
+
+    parts = urlsplit(cleaned)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+
+
+def candidate_download_urls(url: str) -> list[str]:
+    """Try the pasted URL first, then known mirror/original host variants."""
+    primary = normalize_download_url(url)
+    candidates = [primary]
+    parts = urlsplit(primary)
+    host = parts.netloc.lower()
+    mirror_hosts = {
+        "faphouse2.com": "faphouse.com",
+        "www.faphouse2.com": "www.faphouse.com",
+    }
+    if host in mirror_hosts:
+        candidates.append(urlunsplit((parts.scheme, mirror_hosts[host], parts.path, parts.query, "")))
+    return list(dict.fromkeys(candidates))
+
+
+def is_unsupported_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return "unsupported url" in text or "no suitable extractor" in text
+
 def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optional[Path]) -> dict:
     if mode == "audio":
         fmt = "bestaudio/best"
@@ -139,12 +171,14 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "concurrent_fragment_downloads": 4,
         "retries": 5,
         "fragment_retries": 5,
+        "impersonate": "chrome",
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/128.0.0.0 Safari/537.36"
-            )
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
         },
     }
     if merge:
@@ -169,44 +203,55 @@ def download_url(
     cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
     if cookies_text:
         cookies_path = out_dir / "cookies.txt"
-        cookies_path.write_text(cookies_text)
+        cookies_path.write_text(cookies_text, encoding="utf-8")
 
-    def _run(opts: dict) -> Optional[Path]:
+    def _run(attempt_url: str, opts: dict) -> Optional[Path]:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(attempt_url, download=True)
             if "requested_downloads" in info and info["requested_downloads"]:
                 p = Path(info["requested_downloads"][0]["filepath"])
                 if p.exists():
                     return p
-            files = [p for p in out_dir.iterdir() if p.is_file() and p.name != "cookies.txt"]
+            files = [
+                p
+                for p in out_dir.iterdir()
+                if p.is_file() and p.name != "cookies.txt" and not p.name.endswith(".part")
+            ]
             if not files:
                 return None
             return max(files, key=lambda p: p.stat().st_size)
 
     base_opts = build_ydl_opts(out_dir, mode, quality, cookies_path)
+    last_error: Optional[Exception] = None
 
-    # First pass: normal extractors.
-    try:
-        result = _run(base_opts)
-        if result:
-            return result
-    except yt_dlp.utils.UnsupportedError:
-        result = None  # fall through to generic-extractor retry
-    except yt_dlp.utils.DownloadError as e:
-        # Some extractors wrap "Unsupported URL" inside DownloadError.
-        if "Unsupported URL" not in str(e):
-            raise
-        result = None
+    for attempt_url in candidate_download_urls(url):
+        try:
+            result = _run(attempt_url, base_opts)
+            if result:
+                return result
+        except yt_dlp.utils.UnsupportedError as e:
+            last_error = e
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            if not is_unsupported_error(e):
+                logger.info("Normal extractor failed for %s; trying generic fallback: %s", attempt_url, e)
 
-    # Fallback: force generic extractor — grabs whatever <video>/HLS/DASH
-    # source is on the page, works for many niche sites yt-dlp doesn't
-    # officially support.
-    logger.info("Falling back to generic extractor for %s", url)
-    generic_opts = {**base_opts, "force_generic_extractor": True}
-    result = _run(generic_opts)
-    if not result:
-        raise RuntimeError("Download finished but no file found")
-    return result
+        # Fallback: force generic extractor — grabs whatever <video>/HLS/DASH
+        # source is on the page, works for many niche/mirror sites yt-dlp
+        # doesn't officially support.
+        logger.info("Falling back to generic extractor for %s", attempt_url)
+        generic_opts = {**base_opts, "force_generic_extractor": True}
+        try:
+            result = _run(attempt_url, generic_opts)
+            if result:
+                return result
+        except Exception as e:
+            last_error = e
+            logger.info("Generic extractor failed for %s: %s", attempt_url, e)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Download finished but no file found")
 
 
 
