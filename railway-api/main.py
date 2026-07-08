@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import yt_dlp
@@ -645,6 +646,27 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
     return opts
 
 
+def _serialize_cookiejar(jar: http.cookiejar.CookieJar) -> Optional[str]:
+    """Serialize a cookie jar to Netscape format if it contains login-looking cookies."""
+    lines = ["# Netscape HTTP Cookie File", ""]
+    has_auth_cookie = False
+    for c in jar:
+        domain = c.domain if c.domain.startswith(".") else "." + c.domain
+        include_subs = "TRUE"
+        path = c.path or "/"
+        secure = "TRUE" if c.secure else "FALSE"
+        expires = int(c.expires) if c.expires else SESSION_COOKIE_EXPIRES
+        name = c.name
+        value = c.value or ""
+        if any(tok in name.lower() for tok in ("token", "session", "auth", "sid", "jwt", "user", "login")):
+            has_auth_cookie = True
+        lines.append(f"{domain}\t{include_subs}\t{path}\t{secure}\t{expires}\t{name}\t{value}")
+
+    if not has_auth_cookie:
+        return None
+    return "\n".join(lines) + "\n"
+
+
 def faphouse_login_cookies(email: str, password: str) -> Optional[str]:
     """Log in to Faphouse with email/password and return a Netscape cookie file.
 
@@ -662,83 +684,91 @@ def faphouse_login_cookies(email: str, password: str) -> Optional[str]:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/128.0.0.0 Safari/537.36"
     )
-    jar = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    opener.addheaders = [
-        ("User-Agent", ua),
-        ("Accept-Language", "en-US,en;q=0.9"),
+    endpoint_paths = [
+        "/api/auth/signin",  # current SPA endpoint from site-spa-initial-data
+        "/api/auth/sign-in",
+        "/api/auth/login",
+        "/api/v1/auth/sign-in",
+        "/api/user/login",
     ]
-
-    # Prime cookies (CSRF, session) by visiting the homepage.
-    try:
-        opener.open(urllib.request.Request("https://faphouse.com/", headers={"User-Agent": ua}), timeout=30).read()
-    except Exception as e:
-        logger.warning("Faphouse homepage prime failed: %s", e)
-
-    login_endpoints = [
-        "https://faphouse.com/api/auth/sign-in",
-        "https://faphouse.com/api/auth/login",
-        "https://faphouse.com/api/v1/auth/sign-in",
-        "https://faphouse.com/api/user/login",
+    origins = ["https://faphouse.com", "https://faphouse2.com"]
+    payloads = [
+        {"login": email, "password": password},
+        {"email": email, "password": password},
+        {"username": email, "password": password},
     ]
-    payload = json.dumps({"email": email, "password": password}).encode("utf-8")
-    headers = {
-        "User-Agent": ua,
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Origin": "https://faphouse.com",
-        "Referer": "https://faphouse.com/login",
-        "X-Requested-With": "XMLHttpRequest",
-    }
 
     last_err: Optional[str] = None
-    logged_in = False
-    for endpoint in login_endpoints:
+    cookie_text: Optional[str] = None
+
+    for origin in origins:
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        opener.addheaders = [
+            ("User-Agent", ua),
+            ("Accept-Language", "en-US,en;q=0.9"),
+        ]
+
+        # Prime cookies (visitor/CSRF/session) by visiting the same origin first.
         try:
-            req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-            with opener.open(req, timeout=30) as resp:
-                status = resp.status
-                body_snippet = resp.read(500).decode("utf-8", "ignore")
-            if 200 <= status < 300:
-                logger.info("Faphouse login OK via %s (status=%s)", endpoint, status)
-                logged_in = True
-                break
-            last_err = f"{endpoint} -> {status}: {body_snippet[:200]}"
-        except urllib.error.HTTPError as e:
-            body_snippet = ""
-            try:
-                body_snippet = e.read(500).decode("utf-8", "ignore")
-            except Exception:
-                pass
-            last_err = f"{endpoint} -> {e.code}: {body_snippet[:200]}"
+            opener.open(urllib.request.Request(f"{origin}/", headers={"User-Agent": ua}), timeout=30).read()
         except Exception as e:
-            last_err = f"{endpoint} -> {e}"
+            logger.warning("Faphouse homepage prime failed for %s: %s", origin, e)
 
-    if not logged_in:
-        logger.warning("Faphouse auto-login failed on all endpoints. Last error: %s", last_err)
+        for path in endpoint_paths:
+            endpoint = f"{origin}{path}"
+            for payload_dict in payloads:
+                attempts = [
+                    (
+                        json.dumps(payload_dict).encode("utf-8"),
+                        "application/json",
+                    ),
+                    (
+                        urllib.parse.urlencode(payload_dict).encode("utf-8"),
+                        "application/x-www-form-urlencoded; charset=UTF-8",
+                    ),
+                ]
+                for payload, content_type in attempts:
+                    headers = {
+                        "User-Agent": ua,
+                        "Content-Type": content_type,
+                        "Accept": "application/json, text/plain, */*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Origin": origin,
+                        "Referer": f"{origin}/#signin",
+                        "X-Requested-With": "XMLHttpRequest",
+                    }
+                    try:
+                        req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+                        with opener.open(req, timeout=30) as resp:
+                            status = resp.status
+                            body_snippet = resp.read(500).decode("utf-8", "ignore")
+                        serialized = _serialize_cookiejar(jar)
+                        if 200 <= status < 300 and serialized:
+                            logger.info("Faphouse login OK via %s (%s, status=%s)", endpoint, content_type, status)
+                            cookie_text = serialized
+                            break
+                        last_err = f"{endpoint} {content_type} -> {status}: {body_snippet[:200]}"
+                    except urllib.error.HTTPError as e:
+                        body_snippet = ""
+                        try:
+                            body_snippet = e.read(500).decode("utf-8", "ignore")
+                        except Exception:
+                            pass
+                        last_err = f"{endpoint} {content_type} -> {e.code}: {body_snippet[:200]}"
+                    except Exception as e:
+                        last_err = f"{endpoint} {content_type} -> {e}"
+                if cookie_text:
+                    break
+            if cookie_text:
+                break
+        if cookie_text:
+            break
+
+    if not cookie_text:
+        logger.warning("Faphouse auto-login failed on all endpoint/payload variants. Last error: %s", last_err)
         return None
 
-    # Serialize jar to Netscape format.
-    lines = ["# Netscape HTTP Cookie File", ""]
-    has_auth_cookie = False
-    for c in jar:
-        domain = c.domain if c.domain.startswith(".") else "." + c.domain
-        include_subs = "TRUE"
-        path = c.path or "/"
-        secure = "TRUE" if c.secure else "FALSE"
-        expires = int(c.expires) if c.expires else SESSION_COOKIE_EXPIRES
-        name = c.name
-        value = c.value or ""
-        if any(tok in name.lower() for tok in ("token", "session", "auth", "sid", "jwt")):
-            has_auth_cookie = True
-        lines.append(f"{domain}\t{include_subs}\t{path}\t{secure}\t{expires}\t{name}\t{value}")
-
-    if not has_auth_cookie:
-        logger.warning("Faphouse login returned no auth-looking cookies; treating as failed.")
-        return None
-
-    cookie_text = "\n".join(lines) + "\n"
     _FAPHOUSE_LOGIN_CACHE[email] = (cookie_text, now + _FAPHOUSE_LOGIN_TTL)
     return cookie_text
 
@@ -757,14 +787,17 @@ def download_url(
     # server-wide YT_DLP_COOKIES env fallback. If neither is present
     # and this is a Faphouse URL, try auto-login with FAPHOUSE_EMAIL/PASSWORD.
     cookies_path = None
-    cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
-    if not cookies_text and is_faphouse_url(url) and FAPHOUSE_EMAIL and FAPHOUSE_PASSWORD:
+    cookies_text: Optional[str] = None
+    is_faphouse = is_faphouse_url(url)
+    if is_faphouse and FAPHOUSE_EMAIL and FAPHOUSE_PASSWORD:
         try:
             cookies_text = faphouse_login_cookies(FAPHOUSE_EMAIL, FAPHOUSE_PASSWORD)
             if cookies_text:
-                logger.info("Using Faphouse auto-login cookies for %s", url)
+                logger.info("Using Faphouse auto-login cookies before saved cookie fallback for %s", url)
         except Exception as e:
             logger.warning("Faphouse auto-login failed: %s", e)
+    if not cookies_text:
+        cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
     if cookies_text:
         cookies_path = out_dir / "cookies.txt"
         cookies_path.write_text(expand_cookie_domains(cookies_text), encoding="utf-8")
