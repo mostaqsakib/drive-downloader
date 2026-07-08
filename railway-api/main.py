@@ -171,16 +171,43 @@ def download_url(
         cookies_path = out_dir / "cookies.txt"
         cookies_path.write_text(cookies_text)
 
-    with yt_dlp.YoutubeDL(build_ydl_opts(out_dir, mode, quality, cookies_path)) as ydl:
-        info = ydl.extract_info(url, download=True)
-        if "requested_downloads" in info and info["requested_downloads"]:
-            p = Path(info["requested_downloads"][0]["filepath"])
-            if p.exists():
-                return p
-        files = [p for p in out_dir.iterdir() if p.is_file() and p.name != "cookies.txt"]
-        if not files:
-            raise RuntimeError("Download finished but no file found")
-        return max(files, key=lambda p: p.stat().st_size)
+    def _run(opts: dict) -> Optional[Path]:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if "requested_downloads" in info and info["requested_downloads"]:
+                p = Path(info["requested_downloads"][0]["filepath"])
+                if p.exists():
+                    return p
+            files = [p for p in out_dir.iterdir() if p.is_file() and p.name != "cookies.txt"]
+            if not files:
+                return None
+            return max(files, key=lambda p: p.stat().st_size)
+
+    base_opts = build_ydl_opts(out_dir, mode, quality, cookies_path)
+
+    # First pass: normal extractors.
+    try:
+        result = _run(base_opts)
+        if result:
+            return result
+    except yt_dlp.utils.UnsupportedError:
+        result = None  # fall through to generic-extractor retry
+    except yt_dlp.utils.DownloadError as e:
+        # Some extractors wrap "Unsupported URL" inside DownloadError.
+        if "Unsupported URL" not in str(e):
+            raise
+        result = None
+
+    # Fallback: force generic extractor — grabs whatever <video>/HLS/DASH
+    # source is on the page, works for many niche sites yt-dlp doesn't
+    # officially support.
+    logger.info("Falling back to generic extractor for %s", url)
+    generic_opts = {**base_opts, "force_generic_extractor": True}
+    result = _run(generic_opts)
+    if not result:
+        raise RuntimeError("Download finished but no file found")
+    return result
+
 
 
 
