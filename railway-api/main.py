@@ -39,10 +39,16 @@ GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "").strip() or None
 YT_DLP_COOKIES = os.environ.get("YT_DLP_COOKIES", "").strip()
+FAPHOUSE_EMAIL = os.environ.get("FAPHOUSE_EMAIL", "").strip()
+FAPHOUSE_PASSWORD = os.environ.get("FAPHOUSE_PASSWORD", "").strip()
 ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()
 ] or ["*"]
 SESSION_COOKIE_EXPIRES = 4102444799  # 2099-12-31: keep browser session cookies usable in server-side requests
+
+# In-memory cache: cookies_text keyed by email, with expiry timestamp
+_FAPHOUSE_LOGIN_CACHE: dict[str, tuple[str, float]] = {}
+_FAPHOUSE_LOGIN_TTL = 60 * 25  # 25 minutes
 
 app = FastAPI(title="DriveGrabber API")
 app.add_middleware(
