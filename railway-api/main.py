@@ -500,6 +500,32 @@ def media_urls_from_text(text: str) -> list[str]:
     return urls
 
 
+def media_urls_from_state(state: dict) -> list[str]:
+    """Recursively walk view-state JSON and collect any media URLs.
+    Faphouse stores per-quality sources in nested arrays like
+    video.sources / video.mediaDefinition / video.hls — mining those
+    directly gives us every quality variant, not just what's inlined
+    into the surrounding HTML."""
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, str):
+            if re.match(r'https?://[^\s"\'<>]+\.(m3u8|mpd|mp4)(\?|$)', node, re.I):
+                if node not in seen:
+                    seen.add(node)
+                    urls.append(node)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(state)
+    return urls
+
+
 def is_preview_media_url(url: str) -> bool:
     lower = url.lower()
     return any(
@@ -522,12 +548,15 @@ def best_media_url(urls: list[str], require_full: bool) -> Optional[str]:
     if not urls:
         return None
 
-    def score(url: str) -> tuple[int, int, int]:
+    def score(url: str) -> tuple[int, int, int, int]:
         lower = url.lower()
         full_score = 0 if is_preview_media_url(url) else 1
+        # Prefer HLS master playlists (no quality digit) so yt-dlp picks
+        # the highest variant itself instead of us locking onto a single mp4.
+        is_master = 1 if (".m3u8" in lower and not re.search(r'(?<!\d)(2160|1440|1080|720|480|360)(?!\d)', lower)) else 0
         ext_score = 2 if ".m3u8" in lower else 1 if ".mp4" in lower else 0
         quality = max([int(q) for q in re.findall(r'(?<!\d)(2160|1440|1080|720|480|360)(?!\d)', lower)] or [0])
-        return (full_score, ext_score, quality)
+        return (full_score, is_master, quality, ext_score)
 
     return max(urls, key=score)
 
