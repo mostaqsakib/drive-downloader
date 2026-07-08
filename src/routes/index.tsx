@@ -88,13 +88,6 @@ const MODE_OPTIONS = [
   { value: "mute", label: "Video only (mute)" },
 ] as const;
 
-const QUALITY_OPTIONS = [
-  { value: "max", label: "Max quality" },
-  { value: "1080", label: "1080p" },
-  { value: "720", label: "720p" },
-  { value: "480", label: "480p" },
-  { value: "360", label: "360p" },
-] as const;
 
 type Mode = (typeof MODE_OPTIONS)[number]["value"];
 type Quality = (typeof QUALITY_OPTIONS)[number]["value"];
