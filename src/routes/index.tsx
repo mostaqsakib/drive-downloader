@@ -88,16 +88,9 @@ const MODE_OPTIONS = [
   { value: "mute", label: "Video only (mute)" },
 ] as const;
 
-const QUALITY_OPTIONS = [
-  { value: "max", label: "Max quality" },
-  { value: "1080", label: "1080p" },
-  { value: "720", label: "720p" },
-  { value: "480", label: "480p" },
-  { value: "360", label: "360p" },
-] as const;
 
 type Mode = (typeof MODE_OPTIONS)[number]["value"];
-type Quality = (typeof QUALITY_OPTIONS)[number]["value"];
+type Quality = "max" | "1080" | "720" | "480" | "360";
 
 type JobStatus = "queued" | "running" | "done" | "error";
 
@@ -121,7 +114,7 @@ function Home() {
 
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<Mode>("auto");
-  const [quality, setQuality] = useState<Quality>("1080");
+  const quality: Quality = "max";
   const [toDrive, setToDrive] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
 
@@ -280,22 +273,6 @@ function Home() {
                   </SelectTrigger>
                   <SelectContent>
                     {MODE_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={quality}
-                  onValueChange={(v) => setQuality(v as Quality)}
-                  disabled={mode === "audio"}
-                >
-                  <SelectTrigger className="h-12 flex-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {QUALITY_OPTIONS.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         {o.label}
                       </SelectItem>
