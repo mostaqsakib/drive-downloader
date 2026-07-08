@@ -54,6 +54,7 @@ DEFAULT_BROWSER_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
+YT_DLP_SOURCE_ADDRESS = os.environ.get("YT_DLP_SOURCE_ADDRESS", "0.0.0.0").strip() or "0.0.0.0"
 
 # In-memory cache: cookies_text keyed by email, with expiry timestamp
 _FAPHOUSE_LOGIN_CACHE: dict[str, tuple[str, float]] = {}
@@ -758,6 +759,11 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "concurrent_fragment_downloads": 4,
         "retries": 5,
         "fragment_retries": 5,
+        # Railway can resolve some adult CDN hosts to IPv6 first, then fail with
+        # "Network is unreachable" because outbound IPv6 is not available. This
+        # is yt-dlp's --force-ipv4 equivalent.
+        "source_address": YT_DLP_SOURCE_ADDRESS,
+        "socket_timeout": 30,
         "http_headers": {
             "User-Agent": DEFAULT_BROWSER_UA,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -819,6 +825,12 @@ def human_download_error(error: Exception) -> str:
     if "http error 403" in lower or "cloudflare" in lower:
         return (
             "Site Cloudflare/403 diye server request block korche. Browser theke fresh logged-in cookies save kore retry korun; "
+            f"original error: {text}"
+        )
+    if "network is unreachable" in lower:
+        return (
+            "Server theke video CDN-e network route unreachable. IPv4 fallback diye retry kora hoyeche; "
+            "jodi still fail kore, ei CDN/region Railway theke reachable na. "
             f"original error: {text}"
         )
     return text
