@@ -759,7 +759,15 @@ function CookieEntryRow({
   );
 }
 
-function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
+function JobCard({
+  job,
+  onRemove,
+  onRetry,
+}: {
+  job: Job;
+  onRemove: () => void;
+  onRetry: () => void;
+}) {
   const [, tick] = useState(0);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
