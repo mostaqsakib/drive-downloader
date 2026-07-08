@@ -127,6 +127,47 @@ function Home() {
   const quality: Quality = "max";
   const [toDrive, setToDrive] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Load persisted history on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("dg_jobs_v1");
+      if (raw) {
+        const parsed = JSON.parse(raw) as Job[];
+        // Any in-flight jobs from a previous session can't be resumed —
+        // mark them failed so the user can retry.
+        const restored = parsed.map((j) =>
+          j.status === "running" || j.status === "queued"
+            ? {
+                ...j,
+                status: "error" as JobStatus,
+                endedAt: j.endedAt ?? Date.now(),
+                error:
+                  j.error ||
+                  "Page reload hoyeche — job er progress hariye geche. Retry koren.",
+              }
+            : j,
+        );
+        setJobs(restored);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+    setHydrated(true);
+  }, []);
+
+  // Persist to localStorage whenever jobs change (after hydration)
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      // Cap at 200 items to keep storage sane
+      const trimmed = jobs.slice(0, 200);
+      localStorage.setItem("dg_jobs_v1", JSON.stringify(trimmed));
+    } catch {
+      // quota exceeded — ignore
+    }
+  }, [jobs, hydrated]);
 
   const updateJob = (id: string, patch: Partial<Job>) =>
     setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
