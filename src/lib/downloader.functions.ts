@@ -159,7 +159,11 @@ export const fetchDownload = createServerFn({ method: "POST" })
     if (/link\.invalid|link\.unsupported|unsupported/i.test(lastError)) {
       friendly =
         "Ei site/URL Cobalt support kore na. Supported: YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, Facebook, SoundCloud, Twitch, Bluesky, Tumblr, Pinterest, Dailymotion, Loom, Rutube, VK, Bilibili, Snapchat. Adult sites (xxxbp, pornhub, xvideos ityadi) support nei.";
+    } else if (/no_valid_content|no\.valid\.content|content\.video\.unavailable/i.test(lastError)) {
+      friendly =
+        "Ei link theke video/audio extract kora jachhe na. Link ta valid ki na check koren, ba direct video page er URL diyen (playlist/channel na).";
     } else if (/youtube\.login/i.test(lastError)) {
+
       friendly =
         "YouTube ei muhurte ei public instance gulor IP block korche (bot protection). Kichukhon por abar try koren, ba onno video/site try koren.";
     } else if (/auth/i.test(lastError)) {
