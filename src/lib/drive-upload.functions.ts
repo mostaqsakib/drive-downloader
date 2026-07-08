@@ -52,15 +52,21 @@ export const saveToDrive = createServerFn({ method: "POST" })
       const bodyText = await res.text();
       let payload: unknown;
       try {
-        payload = JSON.parse(bodyText);
+        payload = bodyText ? JSON.parse(bodyText) : null;
       } catch {
-        return { kind: "error", message: `API ${res.status}: ${bodyText.slice(0, 200)}` };
+        const fallback = bodyText.trim() || res.statusText || "No error details returned";
+        return { kind: "error", message: `API ${res.status}: ${fallback.slice(0, 200)}` };
       }
 
       if (!res.ok) {
+        const detailValue = (payload as { detail?: unknown } | null)?.detail;
         const detail =
-          (payload as { detail?: string })?.detail ?? `HTTP ${res.status}`;
-        return { kind: "error", message: `Railway API: ${detail}` };
+          typeof detailValue === "string"
+            ? detailValue.trim()
+            : detailValue
+              ? JSON.stringify(detailValue)
+              : bodyText.trim() || res.statusText || `HTTP ${res.status}`;
+        return { kind: "error", message: `Railway API: ${detail || `HTTP ${res.status}`}` };
       }
 
       const p = payload as {
