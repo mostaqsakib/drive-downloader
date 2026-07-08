@@ -125,9 +125,11 @@ function Home() {
     updateJob(job.id, { status: "running", startedAt: Date.now() });
     try {
       if (job.toDrive) {
+        const cookies = pickCookiesFor(job.url)?.cookies;
         const r = await driveFn({
-          data: { url: job.url, mode: job.mode, quality: job.quality },
+          data: { url: job.url, mode: job.mode, quality: job.quality, cookies },
         });
+
         if (r.kind === "success") {
           updateJob(job.id, { status: "done", endedAt: Date.now(), result: r });
           toast.success("Drive-e upload complete!", { description: r.name });
