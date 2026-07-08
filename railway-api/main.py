@@ -49,6 +49,8 @@ class DownloadIn(BaseModel):
     url: str = Field(..., min_length=4, max_length=2048)
     mode: str = Field("auto", pattern="^(auto|audio|mute)$")
     quality: str = Field("1080", pattern="^(max|1080|720|480|360)$")
+    cookies: Optional[str] = Field(None, max_length=200_000)
+
 
 
 class DownloadOut(BaseModel):
