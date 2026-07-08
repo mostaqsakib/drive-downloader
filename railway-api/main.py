@@ -42,6 +42,7 @@ YT_DLP_COOKIES = os.environ.get("YT_DLP_COOKIES", "").strip()
 ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()
 ] or ["*"]
+SESSION_COOKIE_EXPIRES = 4102444799  # 2099-12-31: keep browser session cookies usable in server-side requests
 
 app = FastAPI(title="DriveGrabber API")
 app.add_middleware(
@@ -162,6 +163,107 @@ def mirror_host_aliases(host: str) -> list[str]:
     return [h for h in aliases if h]
 
 
+def _netscape_cookie_row(
+    domain: str,
+    include_subdomains: str,
+    path: str,
+    secure: str,
+    expires: str,
+    name: str,
+    value: str,
+    *,
+    http_only: bool = False,
+) -> Optional[str]:
+    domain = (domain or "").strip()
+    name = (name or "").strip()
+    if not domain or not name:
+        return None
+    include_subdomains = "TRUE" if str(include_subdomains).upper() == "TRUE" or domain.startswith(".") else "FALSE"
+    secure = "TRUE" if str(secure).upper() == "TRUE" else "FALSE"
+    try:
+        expiry_int = int(float(expires or 0))
+    except ValueError:
+        expiry_int = 0
+    if expiry_int <= 0:
+        expiry_int = SESSION_COOKIE_EXPIRES
+    row = "\t".join([
+        domain,
+        include_subdomains,
+        path or "/",
+        secure,
+        str(expiry_int),
+        name,
+        value or "",
+    ])
+    return f"#HttpOnly_{row}" if http_only else row
+
+
+def normalize_cookie_text(cookies_text: str, *, include_header: bool = True) -> str:
+    """Accept Netscape, space-separated Netscape, or browser JSON cookies and emit Netscape rows."""
+    rows: list[str] = []
+    stripped = (cookies_text or "").strip()
+    if not stripped:
+        return ""
+
+    try:
+        parsed = json.loads(stripped)
+        raw_rows = parsed.get("cookies") if isinstance(parsed, dict) else parsed
+        if isinstance(raw_rows, list):
+            for item in raw_rows:
+                if not isinstance(item, dict):
+                    continue
+                domain = str(item.get("domain") or item.get("host") or "").strip()
+                name = str(item.get("name") or "").strip()
+                value = str(item.get("value") or "")
+                expiry = item.get("expirationDate") or item.get("expires") or item.get("expiry") or 0
+                if item.get("session") is True:
+                    expiry = SESSION_COOKIE_EXPIRES
+                row = _netscape_cookie_row(
+                    domain,
+                    "TRUE" if domain.startswith(".") else "FALSE",
+                    str(item.get("path") or "/"),
+                    "TRUE" if bool(item.get("secure")) else "FALSE",
+                    str(expiry or 0),
+                    name,
+                    value,
+                    http_only=bool(item.get("httpOnly") or item.get("http_only")),
+                )
+                if row:
+                    rows.append(row)
+            if rows:
+                prefix = "# Netscape HTTP Cookie File\n" if include_header else ""
+                return prefix + "\n".join(dict.fromkeys(rows)) + "\n"
+    except Exception:
+        pass
+
+    for raw_line in cookies_text.splitlines():
+        raw = raw_line.strip()
+        if not raw:
+            continue
+        http_only = raw.startswith("#HttpOnly_")
+        line = raw.removeprefix("#HttpOnly_") if http_only else raw
+        if line.startswith("#"):
+            continue
+        parts = line.split("\t") if "\t" in line else line.split()
+        if len(parts) < 7:
+            continue
+        row = _netscape_cookie_row(
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[3],
+            parts[4],
+            parts[5],
+            "\t".join(parts[6:]) if "\t" in line else " ".join(parts[6:]),
+            http_only=http_only,
+        )
+        if row:
+            rows.append(row)
+
+    prefix = "# Netscape HTTP Cookie File\n" if include_header else ""
+    return prefix + "\n".join(dict.fromkeys(rows)) + ("\n" if rows else "")
+
+
 def expand_cookie_domains(cookies_text: str) -> str:
     """Duplicate Netscape cookie rows across known mirror domains.
 
@@ -169,9 +271,10 @@ def expand_cookie_domains(cookies_text: str) -> str:
     yt-dlp, and vice versa. These mirrors share the same session, so duplicate
     the cookie rows before passing them to yt-dlp.
     """
+    normalized = normalize_cookie_text(cookies_text)
     lines: list[str] = []
     seen: set[str] = set()
-    for line in cookies_text.splitlines():
+    for line in normalized.splitlines():
         variants = [line]
         http_only = line.startswith("#HttpOnly_")
         cookie_line = line.removeprefix("#HttpOnly_") if http_only else line
@@ -189,7 +292,7 @@ def expand_cookie_domains(cookies_text: str) -> str:
             if variant not in seen:
                 seen.add(variant)
                 lines.append(variant)
-    return "\n".join(lines) + ("\n" if cookies_text.endswith("\n") else "")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def candidate_download_urls(url: str) -> list[str]:
@@ -233,7 +336,7 @@ def cookie_row_stats(cookies_text: str, url: str) -> dict[str, int]:
     matched = 0
     active = 0
     expired = 0
-    for raw_line in cookies_text.splitlines():
+    for raw_line in normalize_cookie_text(cookies_text, include_header=False).splitlines():
         line = raw_line.removeprefix("#HttpOnly_")
         if not line or line.startswith("#") or "\t" not in line:
             continue
