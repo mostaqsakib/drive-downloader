@@ -134,11 +134,14 @@ def normalize_download_url(url: str) -> str:
 def mirror_host_aliases(host: str) -> list[str]:
     """Return equivalent hosts for known numbered mirrors."""
     normalized = host.strip().lstrip(".").lower()
-    aliases = {normalized}
+    aliases = [normalized]
     collapsed = re.sub(r"^([a-z]+?)\d+(\.[a-z.]+)$", r"\1\2", normalized)
-    aliases.add(collapsed)
+    if collapsed not in aliases:
+        aliases.append(collapsed)
     if collapsed == "faphouse.com":
-        aliases.update({"faphouse.com", "faphouse2.com"})
+        for alias in ("faphouse.com", "faphouse2.com"):
+            if alias not in aliases:
+                aliases.append(alias)
     return [h for h in aliases if h]
 
 
