@@ -171,7 +171,6 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "concurrent_fragment_downloads": 4,
         "retries": 5,
         "fragment_retries": 5,
-        "impersonate": "chrome",
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -292,6 +291,7 @@ def download(body: DownloadIn, x_api_token: str = Header(None)):
         raise
     except Exception as e:
         logger.exception("download failed")
-        raise HTTPException(status_code=500, detail=str(e)[:400])
+        detail = str(e).strip() or e.__class__.__name__
+        raise HTTPException(status_code=500, detail=detail[:400])
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
