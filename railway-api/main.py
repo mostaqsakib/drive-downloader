@@ -586,8 +586,11 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
                     data={"studioId": studio_id},
                     referer=page_url,
                 )
-                unlocked_media = best_media_url(media_urls_from_text(unlock_text), require_full=True)
+                unlock_state = parse_view_state(unlock_text)
+                unlock_urls = media_urls_from_text(unlock_text) + media_urls_from_state(unlock_state)
+                unlocked_media = best_media_url(unlock_urls, require_full=True)
                 if unlocked_media:
+                    logger.info("Faphouse unlock media chosen: %s", unlocked_media)
                     return ResolvedMedia(unlocked_media, page_title)
                 webpage = request_with_cookiefile(page_url, cookies_path, referer=page_url)
                 page_title = faphouse_title_from_page(webpage, page_url) or page_title
@@ -606,11 +609,14 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
             "Premium cookies active na bole full video unlock hoyni. Fresh logged-in cookies.txt export kore retry korun."
         )
 
-    media_url = best_media_url(media_urls_from_text(webpage), require_full=require_premium or is_premium)
+    all_urls = media_urls_from_text(webpage) + media_urls_from_state(state)
+    media_url = best_media_url(all_urls, require_full=require_premium or is_premium)
     if (require_premium or is_premium) and not media_url:
         raise PremiumAccessError(
             "Faphouse page-e sudhu trailer/preview source paowa geche — full video source unlock hoyni. Fresh premium cookies.txt save kore retry korun."
         )
+    if media_url:
+        logger.info("Faphouse media chosen: %s (from %d candidates)", media_url, len(all_urls))
     return ResolvedMedia(media_url, page_title) if media_url else None
 
 
