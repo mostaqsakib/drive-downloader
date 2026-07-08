@@ -64,10 +64,10 @@ export const Route = createFileRoute("/")({
         content:
           "Paste a link from YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, SoundCloud and more. Get a clean direct download in seconds — no ads, no signup.",
       },
-      { property: "og:title", content: "DriveGrabber — Fast video downloader" },
+      { property: "og:title", content: "DriveGrabber — Fast video downloader for 30+ sites" },
       {
         property: "og:description",
-        content: "Universal video & audio downloader. Paste a link, get the file.",
+        content: "Paste a link from YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, SoundCloud and more. Get a clean direct download in seconds — no ads, no signup.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

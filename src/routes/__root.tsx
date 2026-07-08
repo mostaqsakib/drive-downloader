@@ -77,13 +77,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "DriveGrabber — Any video → your Google Drive" },
+      { title: "DriveGrabber — Fast video downloader for 30+ sites" },
       {
         name: "description",
         content:
-          "Universal video downloader that ships files from YouTube, Facebook, Instagram, TikTok and 1000+ sites straight to your Google Drive.",
+          "Paste a link from YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, SoundCloud and more. Get a clean direct download in seconds — no ads, no signup.",
       },
       { name: "theme-color", content: "#0b1220" },
+      { property: "og:title", content: "DriveGrabber — Fast video downloader for 30+ sites" },
+      { name: "twitter:title", content: "DriveGrabber — Fast video downloader for 30+ sites" },
+      { property: "og:description", content: "Paste a link from YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, SoundCloud and more. Get a clean direct download in seconds — no ads, no signup." },
+      { name: "twitter:description", content: "Paste a link from YouTube, TikTok, Instagram, Twitter/X, Reddit, Vimeo, SoundCloud and more. Get a clean direct download in seconds — no ads, no signup." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/53feb9b7-10d7-43a1-a2d9-ad2427887738/id-preview-df6c8e57--515067e3-b313-4775-ab3b-2305407f535e.lovable.app-1783528441384.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/53feb9b7-10d7-43a1-a2d9-ad2427887738/id-preview-df6c8e57--515067e3-b313-4775-ab3b-2305407f535e.lovable.app-1783528441384.png" },
+      { name: "twitter:card", content: "summary_large_image" },
+      { property: "og:type", content: "website" },
     ],
     links: [
       {
