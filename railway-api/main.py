@@ -619,12 +619,14 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         merge = "mp4"
 
     opts = {
-        "outtmpl": str(out_dir / "%(title).150B [%(id)s].%(ext)s"),
+        "outtmpl": str(out_dir / "%(title).200B.%(ext)s"),
         "format": fmt,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "restrictfilenames": True,
+        "restrictfilenames": False,
+        "windowsfilenames": False,
+        "trim_file_name": 200,
         "concurrent_fragment_downloads": 4,
         "retries": 5,
         "fragment_retries": 5,
