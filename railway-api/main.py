@@ -1001,20 +1001,29 @@ def download_url(
         # Cloudflare anti-bot: retry with curl_cffi browser impersonation.
         err_text = str(last_error).lower() if last_error else ""
         if any(s in err_text for s in ("cloudflare", "http error 403", "http error 429", "http error 503")):
-            for target in ("chrome", "chrome-110", "safari"):
-                logger.info("Retrying %s with impersonate=%s (Cloudflare bypass)", attempt_url, target)
-                impersonate_opts = {
-                    **base_opts,
-                    "force_generic_extractor": True,
-                    "impersonate": target,
-                }
-                try:
-                    result = _run(attempt_url, impersonate_opts)
-                    if result:
-                        return result
-                except Exception as e:
-                    last_error = e
-                    logger.info("Impersonate (%s) failed for %s: %s", target, attempt_url, e)
+            try:
+                from yt_dlp.networking.impersonate import ImpersonateTarget
+            except Exception:
+                ImpersonateTarget = None  # type: ignore
+            if ImpersonateTarget is not None:
+                for target_str in ("chrome", "chrome-110", "safari"):
+                    try:
+                        target_obj = ImpersonateTarget.from_str(target_str)
+                    except Exception:
+                        continue
+                    logger.info("Retrying %s with impersonate=%s (Cloudflare bypass)", attempt_url, target_str)
+                    impersonate_opts = {
+                        **base_opts,
+                        "force_generic_extractor": True,
+                        "impersonate": target_obj,
+                    }
+                    try:
+                        result = _run(attempt_url, impersonate_opts)
+                        if result:
+                            return result
+                    except Exception as e:
+                        last_error = e
+                        logger.info("Impersonate (%s) failed for %s: %s", target_str, attempt_url, e)
 
     if last_error:
         raise last_error
