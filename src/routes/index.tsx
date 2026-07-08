@@ -13,11 +13,15 @@ import {
   Video,
   ShieldCheck,
   Link2,
+  HardDrive,
+  CheckCircle2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -27,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
 import { fetchDownload, type CobaltResult } from "@/lib/downloader.functions";
+import { saveToDrive, type DriveResult } from "@/lib/drive-upload.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
