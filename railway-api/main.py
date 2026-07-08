@@ -1314,4 +1314,11 @@ def download_status(job_id: str, x_api_token: str = Header(None)):
             status=job["status"],
             result=job.get("result"),
             error=job.get("error"),
+            phase=job.get("phase"),
+            download_progress=job.get("download_progress"),
+            upload_progress=job.get("upload_progress"),
+            downloaded_bytes=job.get("downloaded_bytes"),
+            total_bytes=job.get("total_bytes"),
+            uploaded_bytes=job.get("uploaded_bytes"),
+            upload_total_bytes=job.get("upload_total_bytes"),
         )
