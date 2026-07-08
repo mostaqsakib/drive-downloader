@@ -199,7 +199,7 @@ def download(body: DownloadIn, x_api_token: str = Header(None)):
     tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
     try:
         t0 = time.time()
-        file_path = download_url(body.url, tmp_dir, body.mode, body.quality)
+        file_path = download_url(body.url, tmp_dir, body.mode, body.quality, body.cookies)
         size_mb = file_path.stat().st_size / (1024 * 1024)
         dl_secs = time.time() - t0
 
