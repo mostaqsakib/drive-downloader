@@ -107,6 +107,13 @@ type Job = {
   result?: DriveResult | { kind: "link"; url: string; filename?: string | null };
   error?: string;
   cookieDomain?: string;
+  phase?: string;
+  downloadProgress?: number;
+  uploadProgress?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  uploadedBytes?: number;
+  uploadTotalBytes?: number;
 };
 
 function Home() {
