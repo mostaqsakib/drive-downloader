@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Download,
@@ -10,11 +9,12 @@ import {
   Sparkles,
   Youtube,
   Music2,
-  Video,
   ShieldCheck,
   Link2,
   HardDrive,
   CheckCircle2,
+  XCircle,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
-import { fetchDownload, type CobaltResult } from "@/lib/downloader.functions";
+import { fetchDownload } from "@/lib/downloader.functions";
 import { saveToDrive, type DriveResult } from "@/lib/drive-upload.functions";
 
 export const Route = createFileRoute("/")({
@@ -68,49 +68,125 @@ const QUALITY_OPTIONS = [
   { value: "360", label: "360p" },
 ] as const;
 
+type Mode = (typeof MODE_OPTIONS)[number]["value"];
+type Quality = (typeof QUALITY_OPTIONS)[number]["value"];
+
+type JobStatus = "queued" | "running" | "done" | "error";
+
+type Job = {
+  id: string;
+  url: string;
+  mode: Mode;
+  quality: Quality;
+  toDrive: boolean;
+  status: JobStatus;
+  startedAt: number;
+  endedAt?: number;
+  result?: DriveResult | { kind: "link"; url: string; filename?: string | null };
+  error?: string;
+};
+
 function Home() {
   const runFn = useServerFn(fetchDownload);
   const driveFn = useServerFn(saveToDrive);
 
   const [url, setUrl] = useState("");
-  const [mode, setMode] = useState<(typeof MODE_OPTIONS)[number]["value"]>("auto");
-  const [quality, setQuality] = useState<(typeof QUALITY_OPTIONS)[number]["value"]>("1080");
-  const [toDrive, setToDrive] = useState(false);
-  const [result, setResult] = useState<CobaltResult | null>(null);
-  const [driveResult, setDriveResult] = useState<DriveResult | null>(null);
+  const [mode, setMode] = useState<Mode>("auto");
+  const [quality, setQuality] = useState<Quality>("1080");
+  const [toDrive, setToDrive] = useState(true);
+  const [jobs, setJobs] = useState<Job[]>([]);
 
-  const mutation = useMutation({
-    mutationFn: () => runFn({ data: { url: url.trim(), mode, quality } }),
-    onSuccess: (r) => {
-      setResult(r);
-      if (r.kind === "tunnel" || r.kind === "redirect") {
-        toast.success("Ready!", { description: "Download link ready — niche click koren." });
-        window.open(r.url, "_blank", "noopener,noreferrer");
-      } else if (r.kind === "picker") {
-        toast.success(`${r.items.length} ta item paoa gelo`);
-      } else if (r.kind === "error") {
-        toast.error(r.message);
-      }
-    },
-    onError: (err: Error) => toast.error(err.message ?? "Kichu ekta bhul holo"),
-  });
+  const updateJob = (id: string, patch: Partial<Job>) =>
+    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
 
-  const driveMutation = useMutation({
-    mutationFn: () => driveFn({ data: { url: url.trim(), mode, quality } }),
-    onSuccess: (r) => {
-      setDriveResult(r);
-      if (r.kind === "success") {
-        toast.success("Google Drive-e upload complete!", {
-          description: `${r.name} (${r.sizeMb} MB)`,
+  const startJob = async (job: Job) => {
+    updateJob(job.id, { status: "running", startedAt: Date.now() });
+    try {
+      if (job.toDrive) {
+        const r = await driveFn({
+          data: { url: job.url, mode: job.mode, quality: job.quality },
         });
+        if (r.kind === "success") {
+          updateJob(job.id, { status: "done", endedAt: Date.now(), result: r });
+          toast.success("Drive-e upload complete!", { description: r.name });
+        } else {
+          updateJob(job.id, {
+            status: "error",
+            endedAt: Date.now(),
+            error: r.message,
+          });
+          toast.error(r.message);
+        }
       } else {
-        toast.error(r.message);
-      }
-    },
-    onError: (err: Error) => toast.error(err.message ?? "Kichu ekta bhul holo"),
-  });
+        const r = await runFn({
+          data: { url: job.url, mode: job.mode, quality: job.quality },
+        });
+        if (r.kind === "tunnel" || r.kind === "redirect") {
+          updateJob(job.id, {
+            status: "done",
+            endedAt: Date.now(),
+            result: { kind: "link", url: r.url, filename: r.filename },
+          });
+          window.open(r.url, "_blank", "noopener,noreferrer");
+          toast.success("Download ready!");
+        } else if (r.kind === "picker") {
+          const first = r.items[0]?.url;
+          if (first) {
+            updateJob(job.id, {
+              status: "done",
+              endedAt: Date.now(),
+              result: { kind: "link", url: first },
+            });
+            toast.success(`${r.items.length} items ready`);
+          } else {
+            updateJob(job.id, {
+              status: "error",
+              endedAt: Date.now(),
+              error: "No items",
+            });
+          }
+        } else if (r.kind === "error") {
+          updateJob(job.id, {
+            status: "error",
+            endedAt: Date.now(),
+            error: r.message,
+          });
+          toast.error(r.message);
+        }
 
-  const busy = mutation.isPending || driveMutation.isPending;
+      }
+    } catch (e) {
+      const msg = (e as Error).message ?? "Unknown error";
+      updateJob(job.id, { status: "error", endedAt: Date.now(), error: msg });
+      toast.error(msg);
+    }
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = url.trim();
+    if (!trimmed) return toast.error("Ekta URL diben");
+    const job: Job = {
+      id: crypto.randomUUID(),
+      url: trimmed,
+      mode,
+      quality,
+      toDrive,
+      status: "queued",
+      startedAt: Date.now(),
+    };
+    setJobs((prev) => [job, ...prev]);
+    setUrl("");
+    // Fire-and-forget — jobs run in parallel
+    void startJob(job);
+  };
+
+  const removeJob = (id: string) =>
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+  const clearFinished = () =>
+    setJobs((prev) => prev.filter((j) => j.status === "running" || j.status === "queued"));
+
+  const activeCount = jobs.filter((j) => j.status === "running").length;
 
   return (
     <div className="min-h-screen">
@@ -136,29 +212,19 @@ function Home() {
               variant="secondary"
               className="mb-4 border border-primary/30 bg-primary/10 text-primary"
             >
-              <Sparkles className="mr-1 h-3 w-3" /> 30+ sites supported
+              <Sparkles className="mr-1 h-3 w-3" /> Multiple downloads at once
             </Badge>
             <h1 className="text-4xl font-bold leading-tight md:text-6xl">
               Paste a link. <span className="text-gradient">Get the file.</span>
             </h1>
             <p className="mx-auto mt-4 max-w-xl text-base text-muted-foreground md:text-lg">
-              Fast, clean, no-nonsense downloader for YouTube, TikTok, Instagram, Twitter/X,
-              Reddit, Vimeo, SoundCloud and more.
+              Ekta submit koren, sathe sathe arekta — jotogula khushi. Sob parallel-e cholbe,
+              progress niche dekhben.
             </p>
           </div>
 
           <div className="glass-card mx-auto mt-10 max-w-3xl rounded-2xl p-4 md:p-6">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!url.trim()) return toast.error("Ekta URL diben");
-                setResult(null);
-                setDriveResult(null);
-                if (toDrive) driveMutation.mutate();
-                else mutation.mutate();
-              }}
-              className="flex flex-col gap-3"
-            >
+            <form onSubmit={submit} className="flex flex-col gap-3">
               <div className="relative">
                 <Link2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -171,7 +237,7 @@ function Home() {
                 />
               </div>
               <div className="flex flex-col gap-3 md:flex-row">
-                <Select value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
+                <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
                   <SelectTrigger className="h-12 flex-1">
                     <SelectValue />
                   </SelectTrigger>
@@ -185,7 +251,7 @@ function Home() {
                 </Select>
                 <Select
                   value={quality}
-                  onValueChange={(v) => setQuality(v as typeof quality)}
+                  onValueChange={(v) => setQuality(v as Quality)}
                   disabled={mode === "audio"}
                 >
                   <SelectTrigger className="h-12 flex-1">
@@ -201,24 +267,10 @@ function Home() {
                 </Select>
                 <Button
                   type="submit"
-                  disabled={busy}
                   className="h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 md:w-48"
                 >
-                  {busy ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {toDrive ? "Uploading…" : "Fetching…"}
-                    </>
-                  ) : (
-                    <>
-                      {toDrive ? (
-                        <HardDrive className="h-4 w-4" />
-                      ) : (
-                        <Download className="h-4 w-4" />
-                      )}
-                      {toDrive ? "Save to Drive" : "Download"}
-                    </>
-                  )}
+                  {toDrive ? <HardDrive className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+                  {toDrive ? "Add to queue" : "Download"}
                 </Button>
               </div>
 
@@ -236,7 +288,6 @@ function Home() {
               </div>
             </form>
 
-
             <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
               <SiteChip icon={<Youtube className="h-3 w-3" />} label="YouTube" />
               <SiteChip label="TikTok" />
@@ -249,92 +300,41 @@ function Home() {
             </div>
           </div>
 
-          {result && result.kind !== "error" && (
-            <div className="mx-auto mt-6 max-w-3xl">
-              {(result.kind === "tunnel" || result.kind === "redirect") && (
-                <a href={result.url} target="_blank" rel="noopener noreferrer">
-                  <div className="glass-card flex items-center justify-between rounded-xl p-4 transition hover:border-primary/60">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium">Download ready</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {result.filename ?? result.url}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      className="gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> Open
-                    </Button>
-                  </div>
-                </a>
-              )}
-
-              {result.kind === "picker" && (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                  {result.items.map((it, i) => (
-                    <a
-                      key={i}
-                      href={it.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="glass-card group overflow-hidden rounded-xl transition hover:border-primary/60"
-                    >
-                      {it.thumb ? (
-                        <img
-                          src={it.thumb}
-                          alt={`item ${i + 1}`}
-                          className="aspect-square w-full object-cover"
-                        />
-                      ) : (
-                        <div className="grid aspect-square w-full place-items-center bg-muted">
-                          <Video className="h-8 w-8 text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between p-3 text-xs">
-                        <span>Item {i + 1}</span>
-                        <ExternalLink className="h-3.5 w-3.5 opacity-60 group-hover:opacity-100" />
-                      </div>
-                    </a>
-                  ))}
+          {jobs.length > 0 && (
+            <div className="mx-auto mt-8 max-w-3xl">
+              <div className="mb-3 flex items-center justify-between px-1">
+                <div className="text-sm text-muted-foreground">
+                  {activeCount > 0 ? (
+                    <>
+                      <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin text-primary" />
+                      {activeCount} running • {jobs.length} total
+                    </>
+                  ) : (
+                    <>{jobs.length} job{jobs.length > 1 ? "s" : ""}</>
+                  )}
                 </div>
-              )}
-            </div>
-          )}
-
-          {driveResult && driveResult.kind === "success" && (
-            <div className="mx-auto mt-6 max-w-3xl">
-              <div className="glass-card flex items-center justify-between gap-3 rounded-xl border-primary/40 p-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <CheckCircle2 className="h-6 w-6 shrink-0 text-primary" />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{driveResult.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {driveResult.sizeMb} MB • download {driveResult.downloadSeconds}s • upload{" "}
-                      {driveResult.uploadSeconds}s
-                    </div>
-                  </div>
-                </div>
-                {driveResult.viewLink && (
-                  <a href={driveResult.viewLink} target="_blank" rel="noopener noreferrer">
-                    <Button
-                      size="sm"
-                      className="gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> Open in Drive
-                    </Button>
-                  </a>
-                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearFinished}
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Clear finished
+                </Button>
+              </div>
+              <div className="flex flex-col gap-3">
+                {jobs.map((j) => (
+                  <JobCard key={j.id} job={j} onRemove={() => removeJob(j.id)} />
+                ))}
               </div>
             </div>
           )}
         </section>
 
-
         <section className="mt-20 grid gap-4 md:grid-cols-3">
           <FeatureCard
-            title="Instant"
-            body="No queue, no processing wait — direct link theke bhaba jayna eto fast."
+            title="Parallel"
+            body="Ekta submit korei arektay jete paren — sob parallel-e cholbe."
           />
           <FeatureCard
             title="Private"
@@ -350,6 +350,122 @@ function Home() {
       <footer className="border-t border-border/50 py-6 text-center text-xs text-muted-foreground">
         Powered by cobalt.tools • Respect creators — download only what you own or have rights to.
       </footer>
+    </div>
+  );
+}
+
+function JobCard({ job, onRemove }: { job: Job; onRemove: () => void }) {
+  const [, tick] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (job.status === "running") {
+      timerRef.current = setInterval(() => tick((n) => n + 1), 500);
+      return () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+      };
+    }
+  }, [job.status]);
+
+  const elapsed = Math.max(
+    0,
+    Math.floor(((job.endedAt ?? Date.now()) - job.startedAt) / 1000),
+  );
+
+  const phaseText =
+    job.status === "running"
+      ? job.toDrive
+        ? elapsed < 30
+          ? "Downloading from source…"
+          : "Uploading to Google Drive…"
+        : "Fetching link…"
+      : job.status === "done"
+        ? "Complete"
+        : job.status === "error"
+          ? "Failed"
+          : "Queued";
+
+  return (
+    <div className="glass-card rounded-xl p-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5">
+          {job.status === "running" && (
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          )}
+          {job.status === "done" && <CheckCircle2 className="h-5 w-5 text-primary" />}
+          {job.status === "error" && <XCircle className="h-5 w-5 text-destructive" />}
+          {job.status === "queued" && (
+            <div className="h-5 w-5 rounded-full border-2 border-dashed border-muted-foreground/50" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{job.url}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+            <span>{phaseText}</span>
+            <span>•</span>
+            <span>{elapsed}s</span>
+            <span>•</span>
+            <span>
+              {job.toDrive ? "Drive" : "Direct"} · {job.mode} · {job.quality}
+            </span>
+          </div>
+
+          {job.status === "running" && (
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-full w-1/3 animate-[progress_1.4s_ease-in-out_infinite] rounded-full bg-primary" />
+            </div>
+          )}
+
+          {job.status === "done" && job.result && (
+            <div className="mt-3">
+              {job.result.kind === "success" && (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    <span className="text-foreground">{job.result.name}</span> •{" "}
+                    {job.result.sizeMb} MB • dl {job.result.downloadSeconds}s • up{" "}
+                    {job.result.uploadSeconds}s
+                  </div>
+                  {job.result.viewLink && (
+                    <a
+                      href={job.result.viewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <Button
+                        size="sm"
+                        className="h-8 gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open in Drive
+                      </Button>
+                    </a>
+                  )}
+                </div>
+              )}
+              {job.result.kind === "link" && (
+                <a href={job.result.url} target="_blank" rel="noopener noreferrer">
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" /> Open link
+                  </Button>
+                </a>
+              )}
+            </div>
+          )}
+
+          {job.status === "error" && job.error && (
+            <div className="mt-2 text-xs text-destructive">{job.error}</div>
+          )}
+        </div>
+        <button
+          onClick={onRemove}
+          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label="Remove"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }
