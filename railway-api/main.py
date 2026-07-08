@@ -857,11 +857,7 @@ def faphouse_login_cookies(email: str, password: str) -> Optional[str]:
     if cached and cached[1] > now:
         return cached[0]
 
-    ua = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/128.0.0.0 Safari/537.36"
-    )
+    ua = DEFAULT_BROWSER_UA
     endpoint_paths = [
         "/api/auth/signin",  # current SPA endpoint from site-spa-initial-data
         "/api/auth/sign-in",
@@ -1000,6 +996,7 @@ def download_url(
     last_error: Optional[Exception] = None
 
     for attempt_url in candidate_download_urls(url):
+        attempt_opts = opts_with_page_headers(base_opts, attempt_url)
         if is_faphouse_url(attempt_url):
             try:
                 media = resolve_faphouse_media_url(
@@ -1008,11 +1005,11 @@ def download_url(
                     require_premium=cookies_path is not None,
                 )
                 if media:
-                    media_opts = {**base_opts}
+                    media_opts = opts_with_page_headers(base_opts, attempt_url)
                     if media.title:
                         media_opts["outtmpl"] = str(out_dir / f"{media.title}.%(ext)s")
                     media_opts["http_headers"] = {
-                        **base_opts.get("http_headers", {}),
+                        **media_opts.get("http_headers", {}),
                         "Referer": attempt_url,
                         "Origin": faphouse_origin(attempt_url),
                     }
@@ -1029,7 +1026,7 @@ def download_url(
                     raise
 
         try:
-            result = _run(attempt_url, base_opts)
+            result = _run(attempt_url, attempt_opts)
             if result:
                 return result
         except yt_dlp.utils.UnsupportedError as e:
@@ -1043,7 +1040,7 @@ def download_url(
         # source is on the page, works for many niche/mirror sites yt-dlp
         # doesn't officially support.
         logger.info("Falling back to generic extractor for %s", attempt_url)
-        generic_opts = {**base_opts, "force_generic_extractor": True}
+        generic_opts = generic_impersonation_opts(attempt_opts, "chrome")
         try:
             result = _run(attempt_url, generic_opts)
             if result:
@@ -1060,17 +1057,14 @@ def download_url(
             except Exception:
                 ImpersonateTarget = None  # type: ignore
             if ImpersonateTarget is not None:
-                for target_str in ("chrome", "chrome-110", "safari"):
+                for target_str in ("chrome-131", "chrome-124", "chrome-120", "chrome-110", "chrome", "safari"):
                     try:
                         target_obj = ImpersonateTarget.from_str(target_str)
                     except Exception:
                         continue
                     logger.info("Retrying %s with impersonate=%s (Cloudflare bypass)", attempt_url, target_str)
-                    impersonate_opts = {
-                        **base_opts,
-                        "force_generic_extractor": True,
-                        "impersonate": target_obj,
-                    }
+                    impersonate_opts = generic_impersonation_opts(attempt_opts, target_str)
+                    impersonate_opts["impersonate"] = target_obj
                     try:
                         result = _run(attempt_url, impersonate_opts)
                         if result:
@@ -1080,7 +1074,7 @@ def download_url(
                         logger.info("Impersonate (%s) failed for %s: %s", target_str, attempt_url, e)
 
     if last_error:
-        raise last_error
+        raise RuntimeError(human_download_error(last_error)) from last_error
     raise RuntimeError("Download finished but no file found")
 
 
