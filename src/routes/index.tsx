@@ -18,6 +18,7 @@ import {
   KeyRound,
   Trash2,
   Cookie,
+  RotateCcw,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
