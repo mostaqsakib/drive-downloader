@@ -123,6 +123,13 @@ class DownloadStatusOut(BaseModel):
     status: str
     result: Optional[DownloadOut] = None
     error: Optional[str] = None
+    phase: Optional[str] = None
+    download_progress: Optional[float] = None
+    upload_progress: Optional[float] = None
+    downloaded_bytes: Optional[int] = None
+    total_bytes: Optional[int] = None
+    uploaded_bytes: Optional[int] = None
+    upload_total_bytes: Optional[int] = None
 
 
 # ---------- Google Drive ----------
