@@ -1125,16 +1125,18 @@ def download_url(
     raise RuntimeError("Download finished but no file found")
 
 
-def run_download_to_drive(body: DownloadIn) -> DownloadOut:
+def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
     tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
     try:
         t0 = time.time()
-        file_path = download_url(body.url, tmp_dir, body.mode, body.quality, body.cookies)
+        file_path = download_url(
+            body.url, tmp_dir, body.mode, body.quality, body.cookies, progress_cb=progress_cb
+        )
         size_mb = file_path.stat().st_size / (1024 * 1024)
         dl_secs = time.time() - t0
 
         t1 = time.time()
-        drive_file = upload_to_drive(file_path)
+        drive_file = upload_to_drive(file_path, progress_cb=progress_cb)
         up_secs = time.time() - t1
 
         return DownloadOut(
