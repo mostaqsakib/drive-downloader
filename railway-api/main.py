@@ -39,10 +39,16 @@ GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "").strip() or None
 YT_DLP_COOKIES = os.environ.get("YT_DLP_COOKIES", "").strip()
+FAPHOUSE_EMAIL = os.environ.get("FAPHOUSE_EMAIL", "").strip()
+FAPHOUSE_PASSWORD = os.environ.get("FAPHOUSE_PASSWORD", "").strip()
 ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()
 ] or ["*"]
 SESSION_COOKIE_EXPIRES = 4102444799  # 2099-12-31: keep browser session cookies usable in server-side requests
+
+# In-memory cache: cookies_text keyed by email, with expiry timestamp
+_FAPHOUSE_LOGIN_CACHE: dict[str, tuple[str, float]] = {}
+_FAPHOUSE_LOGIN_TTL = 60 * 25  # 25 minutes
 
 app = FastAPI(title="DriveGrabber API")
 app.add_middleware(
@@ -639,6 +645,107 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
     return opts
 
 
+def faphouse_login_cookies(email: str, password: str) -> Optional[str]:
+    """Log in to Faphouse with email/password and return a Netscape cookie file.
+
+    Result is cached in-process for _FAPHOUSE_LOGIN_TTL seconds. Returns None
+    if login fails. Tries known login endpoints; Faphouse's exact API may
+    change — errors are logged so we can iterate.
+    """
+    cached = _FAPHOUSE_LOGIN_CACHE.get(email)
+    now = time.time()
+    if cached and cached[1] > now:
+        return cached[0]
+
+    ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/128.0.0.0 Safari/537.36"
+    )
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    opener.addheaders = [
+        ("User-Agent", ua),
+        ("Accept-Language", "en-US,en;q=0.9"),
+    ]
+
+    # Prime cookies (CSRF, session) by visiting the homepage.
+    try:
+        opener.open(urllib.request.Request("https://faphouse.com/", headers={"User-Agent": ua}), timeout=30).read()
+    except Exception as e:
+        logger.warning("Faphouse homepage prime failed: %s", e)
+
+    login_endpoints = [
+        "https://faphouse.com/api/auth/sign-in",
+        "https://faphouse.com/api/auth/login",
+        "https://faphouse.com/api/v1/auth/sign-in",
+        "https://faphouse.com/api/user/login",
+    ]
+    payload = json.dumps({"email": email, "password": password}).encode("utf-8")
+    headers = {
+        "User-Agent": ua,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://faphouse.com",
+        "Referer": "https://faphouse.com/login",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+    last_err: Optional[str] = None
+    logged_in = False
+    for endpoint in login_endpoints:
+        try:
+            req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+            with opener.open(req, timeout=30) as resp:
+                status = resp.status
+                body_snippet = resp.read(500).decode("utf-8", "ignore")
+            if 200 <= status < 300:
+                logger.info("Faphouse login OK via %s (status=%s)", endpoint, status)
+                logged_in = True
+                break
+            last_err = f"{endpoint} -> {status}: {body_snippet[:200]}"
+        except urllib.error.HTTPError as e:
+            body_snippet = ""
+            try:
+                body_snippet = e.read(500).decode("utf-8", "ignore")
+            except Exception:
+                pass
+            last_err = f"{endpoint} -> {e.code}: {body_snippet[:200]}"
+        except Exception as e:
+            last_err = f"{endpoint} -> {e}"
+
+    if not logged_in:
+        logger.warning("Faphouse auto-login failed on all endpoints. Last error: %s", last_err)
+        return None
+
+    # Serialize jar to Netscape format.
+    lines = ["# Netscape HTTP Cookie File", ""]
+    has_auth_cookie = False
+    for c in jar:
+        domain = c.domain if c.domain.startswith(".") else "." + c.domain
+        include_subs = "TRUE"
+        path = c.path or "/"
+        secure = "TRUE" if c.secure else "FALSE"
+        expires = int(c.expires) if c.expires else SESSION_COOKIE_EXPIRES
+        name = c.name
+        value = c.value or ""
+        if any(tok in name.lower() for tok in ("token", "session", "auth", "sid", "jwt")):
+            has_auth_cookie = True
+        lines.append(f"{domain}\t{include_subs}\t{path}\t{secure}\t{expires}\t{name}\t{value}")
+
+    if not has_auth_cookie:
+        logger.warning("Faphouse login returned no auth-looking cookies; treating as failed.")
+        return None
+
+    cookie_text = "\n".join(lines) + "\n"
+    _FAPHOUSE_LOGIN_CACHE[email] = (cookie_text, now + _FAPHOUSE_LOGIN_TTL)
+    return cookie_text
+
+
+
+
+
 def download_url(
     url: str,
     out_dir: Path,
@@ -647,9 +754,17 @@ def download_url(
     request_cookies: Optional[str] = None,
 ) -> Path:
     # Per-request cookies (from the web app) take priority over the
-    # server-wide YT_DLP_COOKIES env fallback.
+    # server-wide YT_DLP_COOKIES env fallback. If neither is present
+    # and this is a Faphouse URL, try auto-login with FAPHOUSE_EMAIL/PASSWORD.
     cookies_path = None
     cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
+    if not cookies_text and is_faphouse_url(url) and FAPHOUSE_EMAIL and FAPHOUSE_PASSWORD:
+        try:
+            cookies_text = faphouse_login_cookies(FAPHOUSE_EMAIL, FAPHOUSE_PASSWORD)
+            if cookies_text:
+                logger.info("Using Faphouse auto-login cookies for %s", url)
+        except Exception as e:
+            logger.warning("Faphouse auto-login failed: %s", e)
     if cookies_text:
         cookies_path = out_dir / "cookies.txt"
         cookies_path.write_text(expand_cookie_domains(cookies_text), encoding="utf-8")
