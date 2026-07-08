@@ -13,11 +13,15 @@ import {
   Video,
   ShieldCheck,
   Link2,
+  HardDrive,
+  CheckCircle2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -27,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
 import { fetchDownload, type CobaltResult } from "@/lib/downloader.functions";
+import { saveToDrive, type DriveResult } from "@/lib/drive-upload.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -65,11 +70,14 @@ const QUALITY_OPTIONS = [
 
 function Home() {
   const runFn = useServerFn(fetchDownload);
+  const driveFn = useServerFn(saveToDrive);
 
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<(typeof MODE_OPTIONS)[number]["value"]>("auto");
   const [quality, setQuality] = useState<(typeof QUALITY_OPTIONS)[number]["value"]>("1080");
+  const [toDrive, setToDrive] = useState(false);
   const [result, setResult] = useState<CobaltResult | null>(null);
+  const [driveResult, setDriveResult] = useState<DriveResult | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => runFn({ data: { url: url.trim(), mode, quality } }),
@@ -86,6 +94,23 @@ function Home() {
     },
     onError: (err: Error) => toast.error(err.message ?? "Kichu ekta bhul holo"),
   });
+
+  const driveMutation = useMutation({
+    mutationFn: () => driveFn({ data: { url: url.trim(), mode, quality } }),
+    onSuccess: (r) => {
+      setDriveResult(r);
+      if (r.kind === "success") {
+        toast.success("Google Drive-e upload complete!", {
+          description: `${r.name} (${r.sizeMb} MB)`,
+        });
+      } else {
+        toast.error(r.message);
+      }
+    },
+    onError: (err: Error) => toast.error(err.message ?? "Kichu ekta bhul holo"),
+  });
+
+  const busy = mutation.isPending || driveMutation.isPending;
 
   return (
     <div className="min-h-screen">
@@ -128,7 +153,9 @@ function Home() {
                 e.preventDefault();
                 if (!url.trim()) return toast.error("Ekta URL diben");
                 setResult(null);
-                mutation.mutate();
+                setDriveResult(null);
+                if (toDrive) driveMutation.mutate();
+                else mutation.mutate();
               }}
               className="flex flex-col gap-3"
             >
@@ -174,21 +201,41 @@ function Home() {
                 </Select>
                 <Button
                   type="submit"
-                  disabled={mutation.isPending}
+                  disabled={busy}
                   className="h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 md:w-48"
                 >
-                  {mutation.isPending ? (
+                  {busy ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Fetching…
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {toDrive ? "Uploading…" : "Fetching…"}
                     </>
                   ) : (
                     <>
-                      <Download className="h-4 w-4" /> Download
+                      {toDrive ? (
+                        <HardDrive className="h-4 w-4" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      {toDrive ? "Save to Drive" : "Download"}
                     </>
                   )}
                 </Button>
               </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-border/60 bg-background/40 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="h-4 w-4 text-primary" />
+                  <Label htmlFor="to-drive" className="cursor-pointer text-sm">
+                    Save directly to Google Drive
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      (boro file, adult sites, jekono URL)
+                    </span>
+                  </Label>
+                </div>
+                <Switch id="to-drive" checked={toDrive} onCheckedChange={setToDrive} />
+              </div>
             </form>
+
 
             <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
               <SiteChip icon={<Youtube className="h-3 w-3" />} label="YouTube" />
@@ -254,7 +301,35 @@ function Home() {
               )}
             </div>
           )}
+
+          {driveResult && driveResult.kind === "success" && (
+            <div className="mx-auto mt-6 max-w-3xl">
+              <div className="glass-card flex items-center justify-between gap-3 rounded-xl border-primary/40 p-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <CheckCircle2 className="h-6 w-6 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{driveResult.name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {driveResult.sizeMb} MB • download {driveResult.downloadSeconds}s • upload{" "}
+                      {driveResult.uploadSeconds}s
+                    </div>
+                  </div>
+                </div>
+                {driveResult.viewLink && (
+                  <a href={driveResult.viewLink} target="_blank" rel="noopener noreferrer">
+                    <Button
+                      size="sm"
+                      className="gap-1.5 bg-accent text-accent-foreground hover:bg-accent/90"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open in Drive
+                    </Button>
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </section>
+
 
         <section className="mt-20 grid gap-4 md:grid-cols-3">
           <FeatureCard
