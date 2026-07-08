@@ -1180,20 +1180,62 @@ def cleanup_download_jobs() -> None:
 
 def run_download_job(job_id: str, body: DownloadIn) -> None:
     with _DOWNLOAD_JOBS_LOCK:
-        _DOWNLOAD_JOBS[job_id].update({"status": "running", "updated_at": time.time()})
-    try:
-        result = run_download_to_drive(body)
+        _DOWNLOAD_JOBS[job_id].update({
+            "status": "running",
+            "phase": "downloading",
+            "updated_at": time.time(),
+        })
+
+    def _progress(phase: str, current: int, total: int) -> None:
+        now = time.time()
         with _DOWNLOAD_JOBS_LOCK:
-            _DOWNLOAD_JOBS[job_id].update(
-                {"status": "done", "result": result, "error": None, "updated_at": time.time()}
-            )
+            job = _DOWNLOAD_JOBS.get(job_id)
+            if not job:
+                return
+            # Throttle: only push if >250ms since last update, unless phase changed
+            last = job.get("_last_progress_at", 0)
+            if phase == job.get("phase") and now - last < 0.25:
+                return
+            job["phase"] = phase
+            job["updated_at"] = now
+            job["_last_progress_at"] = now
+            if phase == "downloading":
+                job["downloaded_bytes"] = current
+                job["total_bytes"] = total or None
+                job["download_progress"] = (current / total) if total else None
+            elif phase == "uploading":
+                job["uploaded_bytes"] = current
+                job["upload_total_bytes"] = total or None
+                job["upload_progress"] = (current / total) if total else None
+                # Download is done once we start uploading
+                if job.get("download_progress", 0) and job["download_progress"] < 1:
+                    job["download_progress"] = 1.0
+            elif phase == "processing":
+                job["download_progress"] = 1.0
+
+    try:
+        result = run_download_to_drive(body, progress_cb=_progress)
+        with _DOWNLOAD_JOBS_LOCK:
+            _DOWNLOAD_JOBS[job_id].update({
+                "status": "done",
+                "result": result,
+                "error": None,
+                "phase": "done",
+                "download_progress": 1.0,
+                "upload_progress": 1.0,
+                "updated_at": time.time(),
+            })
     except Exception as e:
         logger.exception("download job failed: %s", job_id)
         detail = str(e).strip() or e.__class__.__name__
         with _DOWNLOAD_JOBS_LOCK:
-            _DOWNLOAD_JOBS[job_id].update(
-                {"status": "error", "result": None, "error": detail[:400], "updated_at": time.time()}
-            )
+            _DOWNLOAD_JOBS[job_id].update({
+                "status": "error",
+                "result": None,
+                "error": detail[:400],
+                "phase": "error",
+                "updated_at": time.time(),
+            })
 
 
 
