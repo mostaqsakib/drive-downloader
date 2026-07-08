@@ -134,11 +134,14 @@ def normalize_download_url(url: str) -> str:
 def mirror_host_aliases(host: str) -> list[str]:
     """Return equivalent hosts for known numbered mirrors."""
     normalized = host.strip().lstrip(".").lower()
-    aliases = {normalized}
+    aliases = [normalized]
     collapsed = re.sub(r"^([a-z]+?)\d+(\.[a-z.]+)$", r"\1\2", normalized)
-    aliases.add(collapsed)
+    if collapsed not in aliases:
+        aliases.append(collapsed)
     if collapsed == "faphouse.com":
-        aliases.update({"faphouse.com", "faphouse2.com"})
+        for alias in ("faphouse.com", "faphouse2.com"):
+            if alias not in aliases:
+                aliases.append(alias)
     return [h for h in aliases if h]
 
 
@@ -177,14 +180,13 @@ def candidate_download_urls(url: str) -> list[str]:
     primary = normalize_download_url(url)
     parts = urlsplit(primary)
     host = parts.netloc.lower()
-    mirror_hosts = {
-        "faphouse.com": "faphouse2.com",
-        "www.faphouse.com": "www.faphouse2.com",
-    }
     candidates = [primary]
-    if host in mirror_hosts:
-        mirrored = urlunsplit((parts.scheme, mirror_hosts[host], parts.path, parts.query, ""))
-        candidates.append(mirrored)
+    is_www = host.startswith("www.")
+    bare_host = host.removeprefix("www.")
+    for alias in mirror_host_aliases(bare_host):
+        alias_host = f"www.{alias}" if is_www else alias
+        if alias_host != host:
+            candidates.append(urlunsplit((parts.scheme, alias_host, parts.path, parts.query, "")))
     return list(dict.fromkeys(candidates))
 
 
@@ -201,6 +203,10 @@ def is_faphouse_url(url: str) -> bool:
 def faphouse_origin(url: str) -> str:
     parts = urlsplit(url)
     return f"{parts.scheme}://{parts.netloc}"
+
+
+class PremiumAccessError(RuntimeError):
+    pass
 
 
 def request_with_cookiefile(
@@ -267,20 +273,31 @@ def media_urls_from_text(text: str) -> list[str]:
     return urls
 
 
+def is_preview_media_url(url: str) -> bool:
+    lower = url.lower()
+    return any(
+        token in lower
+        for token in (
+            "/trailer/",
+            "/preview/",
+            "preview/",
+            "preview_",
+            "heatmap",
+            "heat-preview",
+            "thumb-preview",
+        )
+    )
+
+
 def best_media_url(urls: list[str], require_full: bool) -> Optional[str]:
     if require_full:
-        full_urls = [
-            url
-            for url in urls
-            if not any(token in url.lower() for token in ("/trailer/", "preview", "heatmap", "heat-preview"))
-        ]
-        urls = full_urls or urls
+        urls = [url for url in urls if not is_preview_media_url(url)]
     if not urls:
         return None
 
     def score(url: str) -> tuple[int, int, int]:
         lower = url.lower()
-        full_score = 0 if any(token in lower for token in ("/trailer/", "preview", "heatmap", "heat-preview")) else 1
+        full_score = 0 if is_preview_media_url(url) else 1
         ext_score = 2 if ".m3u8" in lower else 1 if ".mp4" in lower else 0
         quality = max([int(q) for q in re.findall(r'(?<!\d)(2160|1440|1080|720|480|360)(?!\d)', lower)] or [0])
         return (full_score, ext_score, quality)
@@ -295,7 +312,12 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
     is_premium = video.get("videoAccessType") == "premium"
     is_allowed = bool(video.get("videoViewAllowed"))
 
-    if require_premium and is_premium and not is_allowed:
+    if is_premium and not is_allowed and not cookies_path:
+        raise PremiumAccessError(
+            "Ei Faphouse video premium, kintu matching cookies pathano hoyni. Cookie vault-e fresh logged-in cookies.txt save kore retry korun."
+        )
+
+    if is_premium and not is_allowed:
         video_id = video.get("videoId")
         studio_id = video.get("studioId")
         if video_id:
@@ -316,15 +338,20 @@ def resolve_faphouse_media_url(page_url: str, cookies_path: Optional[Path], requ
                 is_allowed = bool(video.get("videoViewAllowed"))
             except urllib.error.HTTPError as e:
                 if e.code in {401, 403}:
-                    raise RuntimeError(
+                    raise PremiumAccessError(
                         "Premium cookies diye Faphouse login unlock hocche na. Site-e login kore fresh cookies.txt export kore abar save korun."
                     ) from e
                 raise
 
-    media_url = best_media_url(media_urls_from_text(webpage), require_full=require_premium)
-    if require_premium and is_premium and not is_allowed:
-        raise RuntimeError(
+    if is_premium and not is_allowed:
+        raise PremiumAccessError(
             "Premium cookies active na bole full video unlock hoyni. Fresh logged-in cookies.txt export kore retry korun."
+        )
+
+    media_url = best_media_url(media_urls_from_text(webpage), require_full=require_premium or is_premium)
+    if (require_premium or is_premium) and not media_url:
+        raise PremiumAccessError(
+            "Faphouse page-e sudhu trailer/preview source paowa geche — full video source unlock hoyni. Fresh premium cookies.txt save kore retry korun."
         )
     return media_url
 
@@ -426,6 +453,9 @@ def download_url(
                     result = _run(media_url, media_opts)
                     if result:
                         return result
+            except PremiumAccessError as e:
+                last_error = e
+                raise
             except Exception as e:
                 last_error = e
                 logger.info("Faphouse direct media resolver failed for %s: %s", attempt_url, e)
