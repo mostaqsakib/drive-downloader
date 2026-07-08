@@ -294,6 +294,26 @@ function Home() {
     setJobs((prev) => prev.filter((j) => j.id !== id));
   const clearFinished = () =>
     setJobs((prev) => prev.filter((j) => j.status === "running" || j.status === "queued"));
+  const clearHistory = () => {
+    if (!confirm("Puro history mucbe? Running jobs thakbe.")) return;
+    setJobs((prev) => prev.filter((j) => j.status === "running" || j.status === "queued"));
+  };
+  const retryJob = (id: string) => {
+    const old = jobs.find((j) => j.id === id);
+    if (!old) return;
+    const retried: Job = {
+      id: crypto.randomUUID(),
+      url: old.url,
+      mode: old.mode,
+      quality: old.quality,
+      toDrive: old.toDrive,
+      status: "queued",
+      startedAt: Date.now(),
+    };
+    // Replace failed job with fresh queued one at the same spot
+    setJobs((prev) => prev.map((j) => (j.id === id ? retried : j)));
+    void startJob(retried);
+  };
 
   const activeCount = jobs.filter((j) => j.status === "running").length;
 
