@@ -121,7 +121,7 @@ function Home() {
 
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<Mode>("auto");
-  const [quality, setQuality] = useState<Quality>("1080");
+  const quality: Quality = "max";
   const [toDrive, setToDrive] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
 
