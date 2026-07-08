@@ -392,11 +392,14 @@ function Home() {
 }
 
 function CookieManager({ currentUrl }: { currentUrl: string }) {
+  const checkFn = useServerFn(checkCookieAccess);
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<CookieEntry[]>([]);
   const [domain, setDomain] = useState("");
   const [label, setLabel] = useState("");
   const [cookies, setCookies] = useState("");
+  const [checkingDomain, setCheckingDomain] = useState<string | null>(null);
+  const [checkResults, setCheckResults] = useState<Record<string, CookieCheckResult>>({});
 
   useEffect(() => {
     if (open) setEntries(loadCookies());
@@ -441,6 +444,23 @@ function CookieManager({ currentUrl }: { currentUrl: string }) {
     setDomain(e.domain);
     setLabel(e.label ?? "");
     setCookies(e.cookies);
+  };
+
+  const checkExisting = async (e: CookieEntry) => {
+    const targetUrl = hostFromUrl(currentUrl) ? currentUrl : `https://${e.domain}/`;
+    setCheckingDomain(e.domain);
+    try {
+      const result = await checkFn({ data: { url: targetUrl, cookies: e.cookies } });
+      setCheckResults((prev) => ({ ...prev, [e.domain]: result }));
+      if (result.kind === "success" && result.ok) toast.success(result.message);
+      else toast.error(result.message);
+    } catch (error) {
+      const result = { kind: "error" as const, message: (error as Error).message };
+      setCheckResults((prev) => ({ ...prev, [e.domain]: result }));
+      toast.error(result.message);
+    } finally {
+      setCheckingDomain(null);
+    }
   };
 
   return (
@@ -538,36 +558,15 @@ function CookieManager({ currentUrl }: { currentUrl: string }) {
             </div>
             <div className="flex flex-col gap-2">
               {entries.map((e) => (
-                <div
+                <CookieEntryRow
                   key={e.domain}
-                  className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 p-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{e.domain}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {e.label ?? "—"} • {(e.cookies.length / 1024).toFixed(1)} KB •{" "}
-                      {new Date(e.updatedAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => editExisting(e)}
-                      className="h-8"
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => remove(e.domain)}
-                      className="h-8 text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
+                  entry={e}
+                  result={checkResults[e.domain]}
+                  checking={checkingDomain === e.domain}
+                  onCheck={() => void checkExisting(e)}
+                  onEdit={() => editExisting(e)}
+                  onRemove={() => remove(e.domain)}
+                />
               ))}
             </div>
           </div>
