@@ -70,11 +70,14 @@ const QUALITY_OPTIONS = [
 
 function Home() {
   const runFn = useServerFn(fetchDownload);
+  const driveFn = useServerFn(saveToDrive);
 
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<(typeof MODE_OPTIONS)[number]["value"]>("auto");
   const [quality, setQuality] = useState<(typeof QUALITY_OPTIONS)[number]["value"]>("1080");
+  const [toDrive, setToDrive] = useState(false);
   const [result, setResult] = useState<CobaltResult | null>(null);
+  const [driveResult, setDriveResult] = useState<DriveResult | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => runFn({ data: { url: url.trim(), mode, quality } }),
@@ -91,6 +94,23 @@ function Home() {
     },
     onError: (err: Error) => toast.error(err.message ?? "Kichu ekta bhul holo"),
   });
+
+  const driveMutation = useMutation({
+    mutationFn: () => driveFn({ data: { url: url.trim(), mode, quality } }),
+    onSuccess: (r) => {
+      setDriveResult(r);
+      if (r.kind === "success") {
+        toast.success("Google Drive-e upload complete!", {
+          description: `${r.name} (${r.sizeMb} MB)`,
+        });
+      } else {
+        toast.error(r.message);
+      }
+    },
+    onError: (err: Error) => toast.error(err.message ?? "Kichu ekta bhul holo"),
+  });
+
+  const busy = mutation.isPending || driveMutation.isPending;
 
   return (
     <div className="min-h-screen">
