@@ -46,7 +46,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { fetchDownload } from "@/lib/downloader.functions";
 import {
   checkCookieAccess,
-  saveToDrive,
+  getDriveJobStatus,
+  startDriveJob,
   type CookieCheckResult,
   type DriveResult,
 } from "@/lib/drive-upload.functions";
@@ -110,7 +111,8 @@ type Job = {
 
 function Home() {
   const runFn = useServerFn(fetchDownload);
-  const driveFn = useServerFn(saveToDrive);
+  const startDriveFn = useServerFn(startDriveJob);
+  const getDriveStatusFn = useServerFn(getDriveJobStatus);
 
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<Mode>("auto");
@@ -128,21 +130,44 @@ function Home() {
         const matchedCookies = pickCookiesFor(job.url);
         const cookies = matchedCookies?.cookies;
         updateJob(job.id, { cookieDomain: matchedCookies?.domain ?? "none" });
-        const r = await driveFn({
-          data: { url: job.url, mode: job.mode, quality: job.quality, cookies },
+        const started = await startDriveFn({
+          data: { url: job.url, mode: job.mode, quality: job.quality, cookies, clientJobId: job.id },
         });
 
-        if (r.kind === "success") {
-          updateJob(job.id, { status: "done", endedAt: Date.now(), result: r });
-          toast.success("Drive-e upload complete!", { description: r.name });
-        } else {
+        if (started.kind === "error") {
           updateJob(job.id, {
             status: "error",
             endedAt: Date.now(),
-            error: r.message,
+            error: started.message,
           });
-          toast.error(r.message);
+          toast.error(started.message);
+          return;
         }
+
+        const pollStartedAt = Date.now();
+        while (Date.now() - pollStartedAt < 15 * 60 * 1000) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const status = await getDriveStatusFn({ data: { jobId: started.jobId } });
+          if (status.kind === "error") {
+            updateJob(job.id, { status: "error", endedAt: Date.now(), error: status.message });
+            toast.error(status.message);
+            return;
+          }
+          if (status.status === "done" && status.result) {
+            updateJob(job.id, { status: "done", endedAt: Date.now(), result: status.result });
+            toast.success("Drive-e upload complete!", { description: status.result.name });
+            return;
+          }
+          if (status.status === "error") {
+            const message = status.error || "Load failed";
+            updateJob(job.id, { status: "error", endedAt: Date.now(), error: message });
+            toast.error(message);
+            return;
+          }
+        }
+        const timeoutMessage = "Download/upload ekhono cholche — kichukhon por retry/check korun.";
+        updateJob(job.id, { status: "error", endedAt: Date.now(), error: timeoutMessage });
+        toast.error(timeoutMessage);
       } else {
         const r = await runFn({
           data: { url: job.url, mode: job.mode, quality: job.quality },
