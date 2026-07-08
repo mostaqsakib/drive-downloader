@@ -145,7 +145,7 @@ function Home() {
               error: "No items",
             });
           }
-        } else {
+        } else if (r.kind === "error") {
           updateJob(job.id, {
             status: "error",
             endedAt: Date.now(),
@@ -153,6 +153,7 @@ function Home() {
           });
           toast.error(r.message);
         }
+
       }
     } catch (e) {
       const msg = (e as Error).message ?? "Unknown error";
