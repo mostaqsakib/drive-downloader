@@ -49,6 +49,8 @@ class DownloadIn(BaseModel):
     url: str = Field(..., min_length=4, max_length=2048)
     mode: str = Field("auto", pattern="^(auto|audio|mute)$")
     quality: str = Field("1080", pattern="^(max|1080|720|480|360)$")
+    cookies: Optional[str] = Field(None, max_length=200_000)
+
 
 
 class DownloadOut(BaseModel):
@@ -154,11 +156,20 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
     return opts
 
 
-def download_url(url: str, out_dir: Path, mode: str, quality: str) -> Path:
+def download_url(
+    url: str,
+    out_dir: Path,
+    mode: str,
+    quality: str,
+    request_cookies: Optional[str] = None,
+) -> Path:
+    # Per-request cookies (from the web app) take priority over the
+    # server-wide YT_DLP_COOKIES env fallback.
     cookies_path = None
-    if YT_DLP_COOKIES:
+    cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
+    if cookies_text:
         cookies_path = out_dir / "cookies.txt"
-        cookies_path.write_text(YT_DLP_COOKIES)
+        cookies_path.write_text(cookies_text)
 
     with yt_dlp.YoutubeDL(build_ydl_opts(out_dir, mode, quality, cookies_path)) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -170,6 +181,7 @@ def download_url(url: str, out_dir: Path, mode: str, quality: str) -> Path:
         if not files:
             raise RuntimeError("Download finished but no file found")
         return max(files, key=lambda p: p.stat().st_size)
+
 
 
 # ---------- Routes ----------
@@ -187,7 +199,7 @@ def download(body: DownloadIn, x_api_token: str = Header(None)):
     tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
     try:
         t0 = time.time()
-        file_path = download_url(body.url, tmp_dir, body.mode, body.quality)
+        file_path = download_url(body.url, tmp_dir, body.mode, body.quality, body.cookies)
         size_mb = file_path.stat().st_size / (1024 * 1024)
         dl_secs = time.time() - t0
 
