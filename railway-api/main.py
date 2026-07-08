@@ -5,12 +5,14 @@ Called from the DriveGrabber web app via a shared secret token.
 
 import logging
 import json
+import hashlib
 import html as html_lib
 import http.cookiejar
 import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +54,12 @@ SESSION_COOKIE_EXPIRES = 4102444799  # 2099-12-31: keep browser session cookies 
 _FAPHOUSE_LOGIN_CACHE: dict[str, tuple[str, float]] = {}
 _FAPHOUSE_LOGIN_TTL = 60 * 25  # 25 minutes
 
+# In-memory Drive job registry. Keeps long downloads off fragile browser/server
+# HTTP connections; the web app starts a job, then polls short status requests.
+_DOWNLOAD_JOBS: dict[str, dict] = {}
+_DOWNLOAD_JOBS_LOCK = threading.Lock()
+_DOWNLOAD_JOB_TTL = 60 * 60
+
 app = FastAPI(title="DriveGrabber API")
 app.add_middleware(
     CORSMiddleware,
@@ -64,8 +72,9 @@ app.add_middleware(
 class DownloadIn(BaseModel):
     url: str = Field(..., min_length=4, max_length=2048)
     mode: str = Field("auto", pattern="^(auto|audio|mute)$")
-    quality: str = Field("1080", pattern="^(max|1080|720|480|360)$")
+    quality: str = Field("max", pattern="^(max|1080|720|480|360)$")
     cookies: Optional[str] = Field(None, max_length=1_000_000)
+    client_job_id: Optional[str] = Field(None, alias="clientJobId", max_length=120)
 
 
 class CookieCheckIn(BaseModel):
@@ -94,6 +103,20 @@ class CookieCheckOut(BaseModel):
     premium: Optional[bool] = None
     allowed: Optional[bool] = None
     login_detected: Optional[bool] = None
+
+
+class DownloadStartOut(BaseModel):
+    ok: bool
+    job_id: str
+    status: str
+
+
+class DownloadStatusOut(BaseModel):
+    ok: bool
+    job_id: str
+    status: str
+    result: Optional[DownloadOut] = None
+    error: Optional[str] = None
 
 
 # ---------- Google Drive ----------
