@@ -18,7 +18,17 @@ export function loadCookies(): CookieEntry[] {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as CookieEntry[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    const byDomain = new Map<string, CookieEntry>();
+    for (const entry of parsed) {
+      if (!entry || typeof entry.cookies !== "string") continue;
+      const domain = canonicalHost(String(entry.domain ?? ""));
+      if (!domain) continue;
+      const normalized = { ...entry, domain };
+      const existing = byDomain.get(domain);
+      if (!existing || normalized.updatedAt > existing.updatedAt) byDomain.set(domain, normalized);
+    }
+    return [...byDomain.values()].sort((a, b) => a.domain.localeCompare(b.domain));
   } catch {
     return [];
   }
@@ -32,7 +42,14 @@ export function saveCookies(entries: CookieEntry[]) {
 // Strip "www." and any leading dot so "www.youtube.com" and ".youtube.com"
 // both match the "youtube.com" bucket.
 export function canonicalHost(host: string): string {
-  return host.replace(/^\.+/, "").replace(/^www\./i, "").toLowerCase();
+  const raw = host.trim();
+  let parsed = raw;
+  try {
+    parsed = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname;
+  } catch {
+    parsed = raw.split("/")[0] ?? raw;
+  }
+  return parsed.replace(/^\.+/, "").replace(/^www\./i, "").toLowerCase();
 }
 
 // Collapse mirror suffixes like "faphouse2.com" → "faphouse.com" so cookies
@@ -61,7 +78,7 @@ export function pickCookiesFor(url: string): CookieEntry | null {
   const entries = loadCookies();
   const match = entries
     .filter((e) => {
-      const aliases = mirrorAliases(e.domain);
+      const aliases = mirrorAliases(canonicalHost(e.domain));
       return hosts.some((h) =>
         aliases.some((d) => h === d || h.endsWith("." + d) || d.endsWith("." + h)),
       );

@@ -5,6 +5,7 @@ Called from the DriveGrabber web app via a shared secret token.
 
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -125,13 +126,46 @@ def normalize_download_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
 
 
-def candidate_download_urls(url: str, prefer_mirror: bool = False) -> list[str]:
-    """Try the pasted URL first, then known mirror/original host variants.
+def mirror_host_aliases(host: str) -> list[str]:
+    """Return equivalent hosts for known numbered mirrors."""
+    normalized = host.strip().lstrip(".").lower()
+    aliases = {normalized}
+    collapsed = re.sub(r"^([a-z]+?)\d+(\.[a-z.]+)$", r"\1\2", normalized)
+    aliases.add(collapsed)
+    if collapsed == "faphouse.com":
+        aliases.update({"faphouse.com", "faphouse2.com"})
+    return [h for h in aliases if h]
 
-    When `prefer_mirror` is set (typically because the caller has cookies for
-    the main domain), the mirror-mapped host is tried FIRST so the logged-in
-    session applies and yt-dlp doesn't settle for the trial-only mirror page.
+
+def expand_cookie_domains(cookies_text: str) -> str:
+    """Duplicate Netscape cookie rows across known mirror domains.
+
+    Browser cookies exported for faphouse.com are not sent to faphouse2.com by
+    yt-dlp, and vice versa. These mirrors share the same session, so duplicate
+    the cookie rows before passing them to yt-dlp.
     """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for line in cookies_text.splitlines():
+        variants = [line]
+        if line and not line.startswith("#") and "\t" in line:
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                original_domain = parts[0]
+                leading_dot = original_domain.startswith(".")
+                for alias in mirror_host_aliases(original_domain):
+                    alias_parts = parts.copy()
+                    alias_parts[0] = f".{alias}" if leading_dot else alias
+                    variants.append("\t".join(alias_parts))
+        for variant in variants:
+            if variant not in seen:
+                seen.add(variant)
+                lines.append(variant)
+    return "\n".join(lines) + ("\n" if cookies_text.endswith("\n") else "")
+
+
+def candidate_download_urls(url: str) -> list[str]:
+    """Try the pasted URL first, then known mirror/original host variants."""
     primary = normalize_download_url(url)
     parts = urlsplit(primary)
     host = parts.netloc.lower()
@@ -142,10 +176,7 @@ def candidate_download_urls(url: str, prefer_mirror: bool = False) -> list[str]:
     candidates = [primary]
     if host in mirror_hosts:
         mirrored = urlunsplit((parts.scheme, mirror_hosts[host], parts.path, parts.query, ""))
-        if prefer_mirror:
-            candidates = [mirrored, primary]
-        else:
-            candidates.append(mirrored)
+        candidates.append(mirrored)
     return list(dict.fromkeys(candidates))
 
 
@@ -211,7 +242,7 @@ def download_url(
     cookies_text = request_cookies if request_cookies else (YT_DLP_COOKIES or None)
     if cookies_text:
         cookies_path = out_dir / "cookies.txt"
-        cookies_path.write_text(cookies_text, encoding="utf-8")
+        cookies_path.write_text(expand_cookie_domains(cookies_text), encoding="utf-8")
 
     def _run(attempt_url: str, opts: dict) -> Optional[Path]:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -232,7 +263,7 @@ def download_url(
     base_opts = build_ydl_opts(out_dir, mode, quality, cookies_path)
     last_error: Optional[Exception] = None
 
-    for attempt_url in candidate_download_urls(url, prefer_mirror=cookies_path is not None):
+    for attempt_url in candidate_download_urls(url):
         try:
             result = _run(attempt_url, base_opts)
             if result:
