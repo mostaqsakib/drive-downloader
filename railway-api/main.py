@@ -125,18 +125,27 @@ def normalize_download_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
 
 
-def candidate_download_urls(url: str) -> list[str]:
-    """Try the pasted URL first, then known mirror/original host variants."""
+def candidate_download_urls(url: str, prefer_mirror: bool = False) -> list[str]:
+    """Try the pasted URL first, then known mirror/original host variants.
+
+    When `prefer_mirror` is set (typically because the caller has cookies for
+    the main domain), the mirror-mapped host is tried FIRST so the logged-in
+    session applies and yt-dlp doesn't settle for the trial-only mirror page.
+    """
     primary = normalize_download_url(url)
-    candidates = [primary]
     parts = urlsplit(primary)
     host = parts.netloc.lower()
     mirror_hosts = {
         "faphouse2.com": "faphouse.com",
         "www.faphouse2.com": "www.faphouse.com",
     }
+    candidates = [primary]
     if host in mirror_hosts:
-        candidates.append(urlunsplit((parts.scheme, mirror_hosts[host], parts.path, parts.query, "")))
+        mirrored = urlunsplit((parts.scheme, mirror_hosts[host], parts.path, parts.query, ""))
+        if prefer_mirror:
+            candidates = [mirrored, primary]
+        else:
+            candidates.append(mirrored)
     return list(dict.fromkeys(candidates))
 
 
