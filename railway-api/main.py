@@ -409,6 +409,29 @@ def download_url(
     last_error: Optional[Exception] = None
 
     for attempt_url in candidate_download_urls(url):
+        if is_faphouse_url(attempt_url):
+            try:
+                media_url = resolve_faphouse_media_url(
+                    attempt_url,
+                    cookies_path,
+                    require_premium=cookies_path is not None,
+                )
+                if media_url:
+                    media_opts = {**base_opts}
+                    media_opts["http_headers"] = {
+                        **base_opts.get("http_headers", {}),
+                        "Referer": attempt_url,
+                        "Origin": faphouse_origin(attempt_url),
+                    }
+                    result = _run(media_url, media_opts)
+                    if result:
+                        return result
+            except Exception as e:
+                last_error = e
+                logger.info("Faphouse direct media resolver failed for %s: %s", attempt_url, e)
+                if cookies_path is not None:
+                    raise
+
         try:
             result = _run(attempt_url, base_opts)
             if result:
