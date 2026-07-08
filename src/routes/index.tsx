@@ -427,21 +427,36 @@ function Home() {
                       {activeCount} running • {jobs.length} total
                     </>
                   ) : (
-                    <>{jobs.length} job{jobs.length > 1 ? "s" : ""}</>
+                    <>History: {jobs.length} item{jobs.length > 1 ? "s" : ""}</>
                   )}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearFinished}
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Clear finished
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFinished}
+                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Clear finished
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearHistory}
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                  >
+                    Clear history
+                  </Button>
+                </div>
               </div>
               <div className="flex flex-col gap-3">
                 {jobs.map((j) => (
-                  <JobCard key={j.id} job={j} onRemove={() => removeJob(j.id)} />
+                  <JobCard
+                    key={j.id}
+                    job={j}
+                    onRemove={() => removeJob(j.id)}
+                    onRetry={() => retryJob(j.id)}
+                  />
                 ))}
               </div>
             </div>
