@@ -944,8 +944,19 @@ function JobCard({
             </div>
           )}
 
-          {job.status === "error" && job.error && (
-            <div className="mt-2 text-xs text-destructive">{job.error}</div>
+          {job.status === "error" && (
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1 text-xs text-destructive">
+                {job.error || "Failed"}
+              </div>
+              <Button
+                size="sm"
+                onClick={onRetry}
+                className="h-8 shrink-0 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Retry
+              </Button>
+            </div>
           )}
         </div>
         <button
