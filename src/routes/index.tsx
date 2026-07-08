@@ -153,13 +153,22 @@ function Home() {
 
         const pollStartedAt = Date.now();
         while (Date.now() - pollStartedAt < 15 * 60 * 1000) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
           const status = await getDriveStatusFn({ data: { jobId: started.jobId } });
           if (status.kind === "error") {
             updateJob(job.id, { status: "error", endedAt: Date.now(), error: status.message });
             toast.error(status.message);
             return;
           }
+          updateJob(job.id, {
+            phase: status.phase ?? undefined,
+            downloadProgress: status.downloadProgress ?? undefined,
+            uploadProgress: status.uploadProgress ?? undefined,
+            downloadedBytes: status.downloadedBytes ?? undefined,
+            totalBytes: status.totalBytes ?? undefined,
+            uploadedBytes: status.uploadedBytes ?? undefined,
+            uploadTotalBytes: status.uploadTotalBytes ?? undefined,
+          });
           if (status.status === "done" && status.result) {
             updateJob(job.id, { status: "done", endedAt: Date.now(), result: status.result });
             toast.success("Drive-e upload complete!", { description: status.result.name });
