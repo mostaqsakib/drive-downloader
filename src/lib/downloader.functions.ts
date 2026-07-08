@@ -15,7 +15,7 @@ export type CobaltResult =
 export const fetchDownload = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => inputSchema.parse(data))
   .handler(async ({ data }): Promise<CobaltResult> => {
-    const apiBase = process.env.COBALT_API_URL?.replace(/\/+$/, "") || "https://api.cobalt.tools";
+    const apiBase = process.env.COBALT_API_URL?.replace(/\/+$/, "") || "https://co.eepy.today";
     const apiKey = process.env.COBALT_API_KEY;
 
     const headers: Record<string, string> = {
@@ -36,6 +36,7 @@ export const fetchDownload = createServerFn({ method: "POST" })
           downloadMode: data.mode,
           audioFormat: "mp3",
           filenameStyle: "pretty",
+          youtubeVideoContainer: "mp4",
         }),
       });
     } catch (e) {
@@ -46,6 +47,8 @@ export const fetchDownload = createServerFn({ method: "POST" })
       status?: string;
       url?: string;
       filename?: string;
+      tunnel?: string[];
+      type?: string;
       picker?: { url: string; thumb?: string; type?: string }[];
       error?: { code?: string; message?: string };
       text?: string;
@@ -60,13 +63,30 @@ export const fetchDownload = createServerFn({ method: "POST" })
       case "tunnel":
       case "redirect":
         return { kind: json.status, url: json.url!, filename: json.filename };
+      case "local-processing": {
+        const tunnels = json.tunnel ?? [];
+        if (tunnels.length === 0) return { kind: "error", message: "No download URL returned" };
+        if (tunnels.length === 1) return { kind: "tunnel", url: tunnels[0], filename: json.filename };
+        // Multiple streams (e.g. video + audio need merging) — show both as picker
+        return {
+          kind: "picker",
+          items: tunnels.map((u, i) => ({
+            url: u,
+            type: i === 0 ? "video" : "audio",
+          })),
+        };
+      }
       case "picker":
         return { kind: "picker", items: json.picker ?? [] };
       case "error":
-      default:
-        return {
-          kind: "error",
-          message: json.error?.code || json.error?.message || json.text || "Download failed",
-        };
+      default: {
+        const code = json.error?.code || "";
+        let msg = json.error?.message || json.text || code || "Download failed";
+        if (code.includes("auth")) {
+          msg = "Cobalt instance authentication chachhe. Different instance try koren ba COBALT_API_URL secret set koren.";
+        }
+        return { kind: "error", message: msg };
+      }
     }
   });
+
