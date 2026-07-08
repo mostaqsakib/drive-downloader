@@ -58,7 +58,24 @@ function mirrorAliases(host: string): string[] {
   const aliases = new Set<string>([host]);
   const stripped = host.replace(/^([a-z]+?)\d+(\.[a-z.]+)$/i, "$1$2");
   if (stripped !== host) aliases.add(stripped);
+  if (stripped === "faphouse.com") {
+    aliases.add("faphouse.com");
+    aliases.add("faphouse2.com");
+  }
   return [...aliases];
+}
+
+function cookieTextDomains(cookies: string): string[] {
+  const domains = new Set<string>();
+  for (const rawLine of cookies.split(/\r?\n/)) {
+    const line = rawLine.replace(/^#HttpOnly_/, "");
+    if (!line || line.startsWith("#") || !line.includes("\t")) continue;
+    const domain = canonicalHost(line.split("\t")[0] ?? "");
+    if (domain) {
+      for (const alias of mirrorAliases(domain)) domains.add(alias);
+    }
+  }
+  return [...domains];
 }
 
 export function hostFromUrl(url: string): string | null {
@@ -78,7 +95,10 @@ export function pickCookiesFor(url: string): CookieEntry | null {
   const entries = loadCookies();
   const match = entries
     .filter((e) => {
-      const aliases = mirrorAliases(canonicalHost(e.domain));
+      const aliases = [
+        ...mirrorAliases(canonicalHost(e.domain)),
+        ...cookieTextDomains(e.cookies),
+      ];
       return hosts.some((h) =>
         aliases.some((d) => h === d || h.endsWith("." + d) || d.endsWith("." + h)),
       );
