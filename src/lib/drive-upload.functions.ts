@@ -5,7 +5,9 @@ const inputSchema = z.object({
   url: z.string().trim().url({ message: "Valid URL diben" }).max(2048),
   mode: z.enum(["auto", "audio", "mute"]).default("auto"),
   quality: z.enum(["max", "1080", "720", "480", "360"]).default("1080"),
+  cookies: z.string().max(200_000).optional(),
 });
+
 
 export type DriveResult =
   | {
