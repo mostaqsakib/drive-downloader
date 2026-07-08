@@ -153,7 +153,9 @@ function Home() {
                 e.preventDefault();
                 if (!url.trim()) return toast.error("Ekta URL diben");
                 setResult(null);
-                mutation.mutate();
+                setDriveResult(null);
+                if (toDrive) driveMutation.mutate();
+                else mutation.mutate();
               }}
               className="flex flex-col gap-3"
             >
@@ -199,21 +201,41 @@ function Home() {
                 </Select>
                 <Button
                   type="submit"
-                  disabled={mutation.isPending}
+                  disabled={busy}
                   className="h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 md:w-48"
                 >
-                  {mutation.isPending ? (
+                  {busy ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Fetching…
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {toDrive ? "Uploading…" : "Fetching…"}
                     </>
                   ) : (
                     <>
-                      <Download className="h-4 w-4" /> Download
+                      {toDrive ? (
+                        <HardDrive className="h-4 w-4" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      {toDrive ? "Save to Drive" : "Download"}
                     </>
                   )}
                 </Button>
               </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-border/60 bg-background/40 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="h-4 w-4 text-primary" />
+                  <Label htmlFor="to-drive" className="cursor-pointer text-sm">
+                    Save directly to Google Drive
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      (boro file, adult sites, jekono URL)
+                    </span>
+                  </Label>
+                </div>
+                <Switch id="to-drive" checked={toDrive} onCheckedChange={setToDrive} />
+              </div>
             </form>
+
 
             <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
               <SiteChip icon={<Youtube className="h-3 w-3" />} label="YouTube" />
