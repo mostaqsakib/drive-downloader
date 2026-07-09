@@ -126,12 +126,25 @@ function Home() {
   const startDriveFn = useServerFn(startDriveJob);
   const getDriveStatusFn = useServerFn(getDriveJobStatus);
 
-  const [url, setUrl] = useState("");
+  const [urlsText, setUrlsText] = useState("");
   const [mode, setMode] = useState<Mode>("auto");
   const quality: Quality = "max";
   const [toDrive, setToDrive] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [hydrated, setHydrated] = useState(false);
+
+  const parsedUrls = urlsText
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const validUrls = parsedUrls.filter((l) => {
+    try {
+      new URL(l);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   // Load persisted history on mount
   useEffect(() => {
@@ -279,21 +292,30 @@ function Home() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return toast.error("Ekta URL diben");
-    const job: Job = {
+    if (validUrls.length === 0) {
+      if (parsedUrls.length > 0) {
+        return toast.error("Kono valid URL pawa jayni. Proti line-te ekta link thaka uchit.");
+      }
+      return toast.error("Ekta URL diben");
+    }
+
+    const newJobs: Job[] = validUrls.map((u) => ({
       id: crypto.randomUUID(),
-      url: trimmed,
+      url: u,
       mode,
       quality,
       toDrive,
       status: "queued",
       startedAt: Date.now(),
-    };
-    setJobs((prev) => [job, ...prev]);
-    setUrl("");
+    }));
+
+    setJobs((prev) => [...newJobs, ...prev]);
+    setUrlsText("");
     // Fire-and-forget — jobs run in parallel
-    void startJob(job);
+    newJobs.forEach((job) => void startJob(job));
+    toast.success(`${newJobs.length} ta URL queue-te add holo`, {
+      description: toDrive ? "Sob Drive-e upload hobe" : "Direct download link toiri hobe",
+    });
   };
 
   const removeJob = (id: string) =>
@@ -335,7 +357,7 @@ function Home() {
           <span className="text-lg font-semibold tracking-tight">DriveGrabber</span>
         </div>
         <div className="flex items-center gap-3">
-          <CookieManager currentUrl={url} />
+          <CookieManager currentUrl={validUrls[0] ?? ""} />
           <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
             <ShieldCheck className="h-4 w-4 text-primary" />
             No ads • No signup
@@ -365,15 +387,19 @@ function Home() {
           <div className="glass-card mx-auto mt-10 max-w-3xl rounded-2xl p-4 md:p-6">
             <form onSubmit={submit} className="flex flex-col gap-3">
               <div className="relative">
-                <Link2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="url"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  className="h-12 border-border/60 bg-background/60 pl-9 text-base"
-                  required
+                <Link2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Textarea
+                  placeholder={"https://www.youtube.com/watch?v=...\nhttps://www.tiktok.com/@user/video/...\n(ek line-e ekta link — jotogula khushi)"}
+                  value={urlsText}
+                  onChange={(e) => setUrlsText(e.target.value)}
+                  className="min-h-[100px] border-border/60 bg-background/60 pl-9 pt-2.5 text-base"
+                  required={validUrls.length === 0}
                 />
+                {validUrls.length > 1 && (
+                  <div className="absolute bottom-2 right-2 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    {validUrls.length} links ready
+                  </div>
+                )}
               </div>
               <div className="flex flex-col gap-3 md:flex-row">
                 <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
@@ -393,7 +419,13 @@ function Home() {
                   className="h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 md:w-48"
                 >
                   {toDrive ? <HardDrive className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-                  {toDrive ? "Add to queue" : "Download"}
+                  {toDrive
+                    ? validUrls.length > 1
+                      ? `Add ${validUrls.length} to queue`
+                      : "Add to queue"
+                    : validUrls.length > 1
+                      ? `Download ${validUrls.length}`
+                      : "Download"}
                 </Button>
               </div>
 
