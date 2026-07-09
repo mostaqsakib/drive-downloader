@@ -776,8 +776,12 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "windowsfilenames": False,
         "trim_file_name": 200,
         "concurrent_fragment_downloads": 4,
-        "retries": 5,
-        "fragment_retries": 5,
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 5,
+        "continuedl": True,
+        "nopart": False,
+        "continue_dl": True,
         # Railway can resolve some adult CDN hosts to IPv6 first, then fail with
         # "Network is unreachable" because outbound IPv6 is not available. This
         # is yt-dlp's --force-ipv4 equivalent.
