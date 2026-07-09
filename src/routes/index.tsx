@@ -177,7 +177,29 @@ function Home() {
     setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
 
   const startJob = async (job: Job) => {
-    updateJob(job.id, { status: "running", startedAt: Date.now() });
+    const attempts = job.attempts ?? 0;
+    updateJob(job.id, { status: "running", startedAt: Date.now(), attempts, error: undefined });
+
+    const failOrRetry = (message: string, opts?: { silent?: boolean }) => {
+      const nextAttempts = attempts + 1;
+      if (nextAttempts <= MAX_AUTO_RETRIES) {
+        const label = `Retry ${nextAttempts}/${MAX_AUTO_RETRIES}: ${message}`;
+        updateJob(job.id, {
+          status: "queued",
+          error: label,
+          attempts: nextAttempts,
+          phase: `auto-retry ${nextAttempts}/${MAX_AUTO_RETRIES}`,
+        });
+        if (!opts?.silent) toast.message(`Auto-retry (${nextAttempts}/${MAX_AUTO_RETRIES})`, { description: message });
+        setTimeout(() => {
+          void startJob({ ...job, attempts: nextAttempts });
+        }, AUTO_RETRY_DELAY_MS);
+        return;
+      }
+      updateJob(job.id, { status: "error", endedAt: Date.now(), error: message, attempts: nextAttempts });
+      if (!opts?.silent) toast.error(message);
+    };
+
     try {
       if (job.toDrive) {
         const matchedCookies = pickCookiesFor(job.url);
@@ -188,12 +210,7 @@ function Home() {
         });
 
         if (started.kind === "error") {
-          updateJob(job.id, {
-            status: "error",
-            endedAt: Date.now(),
-            error: started.message,
-          });
-          toast.error(started.message);
+          failOrRetry(started.message);
           return;
         }
 
@@ -202,8 +219,7 @@ function Home() {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           const status = await getDriveStatusFn({ data: { jobId: started.jobId } });
           if (status.kind === "error") {
-            updateJob(job.id, { status: "error", endedAt: Date.now(), error: status.message });
-            toast.error(status.message);
+            failOrRetry(status.message);
             return;
           }
           updateJob(job.id, {
@@ -222,14 +238,11 @@ function Home() {
           }
           if (status.status === "error") {
             const message = status.error || "Load failed";
-            updateJob(job.id, { status: "error", endedAt: Date.now(), error: message });
-            toast.error(message);
+            failOrRetry(message);
             return;
           }
         }
-        const timeoutMessage = "Download/upload ekhono cholche — kichukhon por retry/check korun.";
-        updateJob(job.id, { status: "error", endedAt: Date.now(), error: timeoutMessage });
-        toast.error(timeoutMessage);
+        failOrRetry("Download/upload timeout — auto-retry cholche (resume korbe).");
       } else {
         const r = await runFn({
           data: { url: job.url, mode: job.mode, quality: job.quality },
@@ -252,26 +265,15 @@ function Home() {
             });
             toast.success(`${r.items.length} items ready`);
           } else {
-            updateJob(job.id, {
-              status: "error",
-              endedAt: Date.now(),
-              error: "No items",
-            });
+            failOrRetry("No items");
           }
         } else if (r.kind === "error") {
-          updateJob(job.id, {
-            status: "error",
-            endedAt: Date.now(),
-            error: r.message,
-          });
-          toast.error(r.message);
+          failOrRetry(r.message);
         }
-
       }
     } catch (e) {
       const msg = (e as Error).message ?? "Unknown error";
-      updateJob(job.id, { status: "error", endedAt: Date.now(), error: msg });
-      toast.error(msg);
+      failOrRetry(msg);
     }
   };
 
