@@ -348,6 +348,16 @@ function Home() {
   };
 
   const activeCount = jobs.filter((j) => j.status === "running").length;
+  const queuedCount = jobs.filter((j) => j.status === "queued").length;
+  const doneCount = jobs.filter((j) => j.status === "done").length;
+  const failedCount = jobs.filter((j) => j.status === "error").length;
+
+  const statusPriority = (s: JobStatus) =>
+    s === "running" ? 0 : s === "queued" ? 1 : s === "error" ? 2 : 3;
+  const sortedJobs = [...jobs].sort(
+    (a, b) => statusPriority(a.status) - statusPriority(b.status) || b.startedAt - a.startedAt,
+  );
+
 
   return (
     <div className="min-h-screen">
@@ -462,15 +472,30 @@ function Home() {
           {jobs.length > 0 && (
             <div className="mx-auto mt-8 max-w-3xl">
               <div className="mb-3 flex items-center justify-between px-1">
-                <div className="text-sm text-muted-foreground">
-                  {activeCount > 0 ? (
-                    <>
-                      <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin text-primary" />
-                      {activeCount} running • {jobs.length} total
-                    </>
-                  ) : (
-                    <>History: {jobs.length} item{jobs.length > 1 ? "s" : ""}</>
+                <div className="flex flex-wrap items-center gap-2">
+                  {activeCount > 0 && (
+                    <Badge className="gap-1 bg-primary text-primary-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {activeCount} downloading
+                    </Badge>
                   )}
+                  {queuedCount > 0 && (
+                    <Badge variant="secondary">{queuedCount} queued</Badge>
+                  )}
+                  {doneCount > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="border-primary/30 text-primary"
+                    >
+                      {doneCount} uploaded
+                    </Badge>
+                  )}
+                  {failedCount > 0 && (
+                    <Badge variant="destructive">{failedCount} failed</Badge>
+                  )}
+                  <span className="text-sm text-muted-foreground">
+                    • {jobs.length} total
+                  </span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Button
@@ -492,7 +517,7 @@ function Home() {
                 </div>
               </div>
               <div className="flex flex-col gap-3">
-                {jobs.map((j) => (
+                {sortedJobs.map((j) => (
                   <JobCard
                     key={j.id}
                     job={j}
@@ -503,6 +528,7 @@ function Home() {
               </div>
             </div>
           )}
+
         </section>
 
         {jobs.length > 0 && <StatsDashboard jobs={jobs} />}
@@ -803,7 +829,47 @@ function CookieEntryRow({
   );
 }
 
+function StatusBadge({ job }: { job: Job }) {
+  if (job.status === "queued") {
+    return (
+      <Badge variant="outline" className="shrink-0">
+        Queued
+      </Badge>
+    );
+  }
+  if (job.status === "running") {
+    const label =
+      job.phase === "uploading"
+        ? "Uploading"
+        : job.phase === "downloading" || job.phase === "processing"
+          ? "Downloading"
+          : "Processing";
+    return (
+      <Badge className="shrink-0 gap-1 bg-primary text-primary-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        {label}
+      </Badge>
+    );
+  }
+  if (job.status === "done") {
+    return (
+      <Badge
+        variant="outline"
+        className="shrink-0 border-primary/30 text-primary"
+      >
+        {job.toDrive ? "Uploaded" : "Ready"}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive" className="shrink-0">
+      Failed
+    </Badge>
+  );
+}
+
 function JobCard({
+
   job,
   onRemove,
   onRetry,
@@ -878,7 +944,10 @@ function JobCard({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{job.url}</div>
+          <div className="flex items-start justify-between gap-2">
+            <div className="truncate text-sm font-medium">{job.url}</div>
+            <StatusBadge job={job} />
+          </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             <span>{phaseText}</span>
             <span>•</span>
@@ -893,7 +962,14 @@ function JobCard({
                 <span>Cookie: {job.cookieDomain}</span>
               </>
             )}
+            {job.status === "queued" && (job.attempts ?? 0) > 0 && (
+              <>
+                <span>•</span>
+                <span>Retry {job.attempts}/{MAX_AUTO_RETRIES}</span>
+              </>
+            )}
           </div>
+
 
           {job.status === "running" && (
             <div className="mt-3 space-y-2">
