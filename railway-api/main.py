@@ -1241,11 +1241,27 @@ def download_job_id(body: DownloadIn) -> str:
 
 
 def cleanup_download_jobs() -> None:
-    cutoff = time.time() - _DOWNLOAD_JOB_TTL
+    # Keep done jobs around for _DOWNLOAD_DEDUP_TTL so dedup works after upload
+    keep_done_cutoff = time.time() - _DOWNLOAD_DEDUP_TTL
+    live_cutoff = time.time() - _DOWNLOAD_JOB_TTL
     with _DOWNLOAD_JOBS_LOCK:
-        stale = [job_id for job_id, job in _DOWNLOAD_JOBS.items() if job.get("updated_at", 0) < cutoff]
-        for job_id in stale:
-            _DOWNLOAD_JOBS.pop(job_id, None)
+        stale = []
+        for jid, job in _DOWNLOAD_JOBS.items():
+            updated = job.get("updated_at", 0)
+            status = job.get("status")
+            if status == "done":
+                if updated < keep_done_cutoff:
+                    stale.append(jid)
+            else:
+                if updated < live_cutoff:
+                    stale.append(jid)
+        for jid in stale:
+            job = _DOWNLOAD_JOBS.pop(jid, None)
+            if job:
+                ck = job.get("content_key")
+                if ck and _DOWNLOAD_CONTENT_INDEX.get(ck) == jid:
+                    _DOWNLOAD_CONTENT_INDEX.pop(ck, None)
+
 
 
 def run_download_job(job_id: str, body: DownloadIn) -> None:
