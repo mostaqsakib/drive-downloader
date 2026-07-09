@@ -65,6 +65,11 @@ _FAPHOUSE_LOGIN_TTL = 60 * 25  # 25 minutes
 _DOWNLOAD_JOBS: dict[str, dict] = {}
 _DOWNLOAD_JOBS_LOCK = threading.Lock()
 _DOWNLOAD_JOB_TTL = 60 * 60
+# Content-key -> job_id map for dedup so same URL/mode/quality/cookies doesn't
+# upload to Drive multiple times when the user resubmits or retries.
+_DOWNLOAD_CONTENT_INDEX: dict[str, str] = {}
+_DOWNLOAD_DEDUP_TTL = 6 * 60 * 60  # 6 hours: reuse a completed Drive result
+
 
 app = FastAPI(title="DriveGrabber API")
 app.add_middleware(
