@@ -904,7 +904,10 @@ function JobCard({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{job.url}</div>
+          <div className="flex items-start justify-between gap-2">
+            <div className="truncate text-sm font-medium">{job.url}</div>
+            <StatusBadge job={job} />
+          </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             <span>{phaseText}</span>
             <span>•</span>
@@ -919,7 +922,14 @@ function JobCard({
                 <span>Cookie: {job.cookieDomain}</span>
               </>
             )}
+            {job.status === "queued" && (job.attempts ?? 0) > 0 && (
+              <>
+                <span>•</span>
+                <span>Retry {job.attempts}/{MAX_AUTO_RETRIES}</span>
+              </>
+            )}
           </div>
+
 
           {job.status === "running" && (
             <div className="mt-3 space-y-2">
