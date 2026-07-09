@@ -115,7 +115,11 @@ type Job = {
   totalBytes?: number;
   uploadedBytes?: number;
   uploadTotalBytes?: number;
+  attempts?: number;
 };
+
+const MAX_AUTO_RETRIES = 3;
+const AUTO_RETRY_DELAY_MS = 4000;
 
 function Home() {
   const runFn = useServerFn(fetchDownload);
