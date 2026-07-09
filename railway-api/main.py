@@ -817,7 +817,8 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         merge = "mp4"
     else:
         if quality == "max":
-            fmt = "bv*+ba/b"
+            # Prefer highest-res video + best audio; fall back progressively.
+            fmt = "bv*+ba/bv+ba/b*+ba/b"
         else:
             fmt = f"bv*[height<={quality}]+ba/b[height<={quality}]/b"
         post = []
