@@ -1207,6 +1207,20 @@ def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
 
 
 
+def download_content_key(body: DownloadIn) -> str:
+    return hashlib.sha1(
+        json.dumps(
+            {
+                "url": body.url,
+                "mode": body.mode,
+                "quality": body.quality,
+                "cookies": body.cookies or "",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def download_job_id(body: DownloadIn) -> str:
     seed = body.client_job_id or f"{time.time_ns()}"
     digest = hashlib.sha1(
@@ -1223,6 +1237,7 @@ def download_job_id(body: DownloadIn) -> str:
     ).hexdigest()[:16]
     safe_seed = re.sub(r"[^a-zA-Z0-9_-]+", "", seed)[:48] or "job"
     return f"{safe_seed}-{digest}"
+
 
 
 def cleanup_download_jobs() -> None:
