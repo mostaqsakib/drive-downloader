@@ -1024,6 +1024,101 @@ function SiteChip({ icon, label }: { icon?: React.ReactNode; label: string }) {
   );
 }
 
+function StatsDashboard({ jobs }: { jobs: Job[] }) {
+  const total = jobs.length;
+  const done = jobs.filter((j) => j.status === "done").length;
+  const failed = jobs.filter((j) => j.status === "error").length;
+  const queuedOrRunning = jobs.filter((j) => j.status === "queued" || j.status === "running").length;
+  const successRate = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const driveUploads = jobs.filter((j) => j.status === "done" && j.result?.kind === "success").length;
+  const totalMb = jobs.reduce((sum, j) => {
+    if (j.status === "done" && j.result?.kind === "success") {
+      return sum + (j.result.sizeMb ?? 0);
+    }
+    return sum;
+  }, 0);
+
+  const avgDownloadSeconds =
+    done > 0
+      ? Math.round(
+          jobs.reduce((sum, j) => {
+            if (j.status === "done" && j.result?.kind === "success") {
+              return sum + (j.result.downloadSeconds ?? 0);
+            }
+            return sum;
+          }, 0) / done,
+        )
+      : 0;
+
+  const domainCounts = jobs.reduce<Record<string, number>>((acc, j) => {
+    try {
+      const host = new URL(j.url).hostname.replace(/^www\./, "");
+      acc[host] = (acc[host] ?? 0) + 1;
+    } catch {
+      // ignore invalid URLs
+    }
+    return acc;
+  }, {});
+  const topDomain = Object.entries(domainCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+
+  const Stat = ({
+    icon,
+    label,
+    value,
+    sub,
+  }: {
+    icon: React.ReactNode;
+    label: string;
+    value: string;
+    sub?: string;
+  }) => (
+    <div className="glass-card rounded-xl p-4">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        {icon}
+        <span className="text-xs font-medium">{label}</span>
+      </div>
+      <div className="mt-2 text-2xl font-semibold">{value}</div>
+      {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <section className="mx-auto mt-10 max-w-3xl">
+      <div className="mb-3 flex items-center gap-2 px-1">
+        <BarChart3 className="h-4 w-4 text-primary" />
+        <h2 className="text-sm font-medium">Download analytics</h2>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat
+          icon={<TrendingUp className="h-4 w-4" />}
+          label="Success rate"
+          value={`${successRate}%`}
+          sub={`${done} done / ${total} total`}
+        />
+        <Stat
+          icon={<CheckCircle2 className="h-4 w-4" />}
+          label="Drive uploads"
+          value={String(driveUploads)}
+          sub={totalMb > 0 ? `${totalMb.toFixed(1)} MB uploaded` : undefined}
+        />
+        <Stat
+          icon={<AlertCircle className="h-4 w-4" />}
+          label="Failed / active"
+          value={`${failed}${queuedOrRunning > 0 ? ` + ${queuedOrRunning}` : ""}`}
+          sub={failed > 0 ? "Retry kora jabe" : undefined}
+        />
+        <Stat
+          icon={<Clock className="h-4 w-4" />}
+          label="Avg download time"
+          value={avgDownloadSeconds > 0 ? `${avgDownloadSeconds}s` : "—"}
+          sub={topDomain ? `Top: ${topDomain}` : undefined}
+        />
+      </div>
+    </section>
+  );
+}
+
 function FeatureCard({ title, body }: { title: string; body: string }) {
   return (
     <div className="glass-card rounded-2xl p-6">
