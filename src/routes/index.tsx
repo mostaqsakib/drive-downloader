@@ -19,6 +19,10 @@ import {
   Trash2,
   Cookie,
   RotateCcw,
+  BarChart3,
+  TrendingUp,
+  Clock,
+  AlertCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
