@@ -549,9 +549,6 @@ function Home() {
         </section>
       </main>
 
-      <footer className="border-t border-border/50 py-6 text-center text-xs text-muted-foreground">
-        Powered by cobalt.tools • Respect creators — download only what you own or have rights to.
-      </footer>
     </div>
   );
 }
