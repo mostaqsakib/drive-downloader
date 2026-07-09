@@ -780,13 +780,18 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "restrictfilenames": False,
         "windowsfilenames": False,
         "trim_file_name": 200,
-        "concurrent_fragment_downloads": 4,
+        # Perf: parallelize HLS/DASH fragments and use a large HTTP chunk for
+        # single-file MP4s so throughput isn't capped by per-connection latency.
+        "concurrent_fragment_downloads": 16,
+        "http_chunk_size": 10 * 1024 * 1024,
+        "buffersize": 1024 * 1024,
         "retries": 10,
         "fragment_retries": 10,
         "file_access_retries": 5,
         "continuedl": True,
         "nopart": False,
         "continue_dl": True,
+
         # Railway can resolve some adult CDN hosts to IPv6 first, then fail with
         # "Network is unreachable" because outbound IPv6 is not available. This
         # is yt-dlp's --force-ipv4 equivalent.
