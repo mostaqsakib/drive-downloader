@@ -776,8 +776,12 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
         "windowsfilenames": False,
         "trim_file_name": 200,
         "concurrent_fragment_downloads": 4,
-        "retries": 5,
-        "fragment_retries": 5,
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 5,
+        "continuedl": True,
+        "nopart": False,
+        "continue_dl": True,
         # Railway can resolve some adult CDN hosts to IPv6 first, then fail with
         # "Network is unreachable" because outbound IPv6 is not available. This
         # is yt-dlp's --force-ipv4 equivalent.
@@ -1125,8 +1129,49 @@ def download_url(
     raise RuntimeError("Download finished but no file found")
 
 
+def content_cache_key(body: DownloadIn) -> str:
+    """Stable hash for URL+mode+quality+cookies so retries reuse the same tmp dir
+    and yt-dlp can resume from the .part file instead of re-downloading."""
+    digest = hashlib.sha1(
+        json.dumps(
+            {
+                "url": (body.url or "").strip(),
+                "mode": body.mode,
+                "quality": body.quality,
+                "cookies": body.cookies or "",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:20]
+    return digest
+
+
+def _resumable_cache_root() -> Path:
+    root = Path(tempfile.gettempdir()) / "dg_cache"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def cleanup_resumable_cache(max_age_seconds: int = 24 * 60 * 60) -> None:
+    root = _resumable_cache_root()
+    cutoff = time.time() - max_age_seconds
+    try:
+        for entry in root.iterdir():
+            try:
+                if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
-    tmp_dir = Path(tempfile.mkdtemp(prefix="dl_"))
+    cleanup_resumable_cache()
+    cache_key = content_cache_key(body)
+    tmp_dir = _resumable_cache_root() / cache_key
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    upload_success = False
     try:
         t0 = time.time()
         file_path = download_url(
@@ -1138,6 +1183,7 @@ def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
         t1 = time.time()
         drive_file = upload_to_drive(file_path, progress_cb=progress_cb)
         up_secs = time.time() - t1
+        upload_success = True
 
         return DownloadOut(
             ok=True,
@@ -1149,7 +1195,11 @@ def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
             file_id=drive_file["id"],
         )
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        # Only clear the cache on success. On failure keep .part files so a
+        # retry can resume from where the previous attempt left off.
+        if upload_success:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 
 def download_job_id(body: DownloadIn) -> str:
