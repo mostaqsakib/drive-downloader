@@ -357,7 +357,7 @@ function Home() {
           <span className="text-lg font-semibold tracking-tight">DriveGrabber</span>
         </div>
         <div className="flex items-center gap-3">
-          <CookieManager currentUrl={url} />
+          <CookieManager currentUrl={validUrls[0] ?? ""} />
           <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
             <ShieldCheck className="h-4 w-4 text-primary" />
             No ads • No signup
