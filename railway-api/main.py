@@ -162,7 +162,7 @@ def upload_to_drive(file_path: Path, progress_cb=None) -> dict:
     media = MediaFileUpload(
         str(file_path),
         resumable=True,
-        chunksize=8 * 1024 * 1024,
+        chunksize=32 * 1024 * 1024,
     )
     request = service.files().create(
         body=metadata,
