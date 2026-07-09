@@ -126,12 +126,25 @@ function Home() {
   const startDriveFn = useServerFn(startDriveJob);
   const getDriveStatusFn = useServerFn(getDriveJobStatus);
 
-  const [url, setUrl] = useState("");
+  const [urlsText, setUrlsText] = useState("");
   const [mode, setMode] = useState<Mode>("auto");
   const quality: Quality = "max";
   const [toDrive, setToDrive] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [hydrated, setHydrated] = useState(false);
+
+  const parsedUrls = urlsText
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const validUrls = parsedUrls.filter((l) => {
+    try {
+      new URL(l);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   // Load persisted history on mount
   useEffect(() => {
