@@ -65,6 +65,11 @@ _FAPHOUSE_LOGIN_TTL = 60 * 25  # 25 minutes
 _DOWNLOAD_JOBS: dict[str, dict] = {}
 _DOWNLOAD_JOBS_LOCK = threading.Lock()
 _DOWNLOAD_JOB_TTL = 60 * 60
+# Content-key -> job_id map for dedup so same URL/mode/quality/cookies doesn't
+# upload to Drive multiple times when the user resubmits or retries.
+_DOWNLOAD_CONTENT_INDEX: dict[str, str] = {}
+_DOWNLOAD_DEDUP_TTL = 6 * 60 * 60  # 6 hours: reuse a completed Drive result
+
 
 app = FastAPI(title="DriveGrabber API")
 app.add_middleware(
@@ -1202,6 +1207,20 @@ def run_download_to_drive(body: DownloadIn, progress_cb=None) -> DownloadOut:
 
 
 
+def download_content_key(body: DownloadIn) -> str:
+    return hashlib.sha1(
+        json.dumps(
+            {
+                "url": body.url,
+                "mode": body.mode,
+                "quality": body.quality,
+                "cookies": body.cookies or "",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def download_job_id(body: DownloadIn) -> str:
     seed = body.client_job_id or f"{time.time_ns()}"
     digest = hashlib.sha1(
@@ -1220,12 +1239,29 @@ def download_job_id(body: DownloadIn) -> str:
     return f"{safe_seed}-{digest}"
 
 
+
 def cleanup_download_jobs() -> None:
-    cutoff = time.time() - _DOWNLOAD_JOB_TTL
+    # Keep done jobs around for _DOWNLOAD_DEDUP_TTL so dedup works after upload
+    keep_done_cutoff = time.time() - _DOWNLOAD_DEDUP_TTL
+    live_cutoff = time.time() - _DOWNLOAD_JOB_TTL
     with _DOWNLOAD_JOBS_LOCK:
-        stale = [job_id for job_id, job in _DOWNLOAD_JOBS.items() if job.get("updated_at", 0) < cutoff]
-        for job_id in stale:
-            _DOWNLOAD_JOBS.pop(job_id, None)
+        stale = []
+        for jid, job in _DOWNLOAD_JOBS.items():
+            updated = job.get("updated_at", 0)
+            status = job.get("status")
+            if status == "done":
+                if updated < keep_done_cutoff:
+                    stale.append(jid)
+            else:
+                if updated < live_cutoff:
+                    stale.append(jid)
+        for jid in stale:
+            job = _DOWNLOAD_JOBS.pop(jid, None)
+            if job:
+                ck = job.get("content_key")
+                if ck and _DOWNLOAD_CONTENT_INDEX.get(ck) == jid:
+                    _DOWNLOAD_CONTENT_INDEX.pop(ck, None)
+
 
 
 def run_download_job(job_id: str, body: DownloadIn) -> None:
@@ -1331,21 +1367,37 @@ def start_download(body: DownloadIn, x_api_token: str = Header(None)):
 
     cleanup_download_jobs()
     job_id = download_job_id(body)
+    content_key = download_content_key(body)
+    now = time.time()
     with _DOWNLOAD_JOBS_LOCK:
         existing = _DOWNLOAD_JOBS.get(job_id)
         if existing:
             return DownloadStartOut(ok=True, job_id=job_id, status=existing["status"])
+        # Dedup: same content already running or recently succeeded → reuse it
+        # so the same video isn't re-uploaded to Drive multiple times.
+        prior_id = _DOWNLOAD_CONTENT_INDEX.get(content_key)
+        prior = _DOWNLOAD_JOBS.get(prior_id) if prior_id else None
+        if prior:
+            status = prior.get("status")
+            age = now - prior.get("updated_at", now)
+            if status in ("queued", "running"):
+                return DownloadStartOut(ok=True, job_id=prior_id, status=status)
+            if status == "done" and age < _DOWNLOAD_DEDUP_TTL:
+                return DownloadStartOut(ok=True, job_id=prior_id, status=status)
         _DOWNLOAD_JOBS[job_id] = {
             "status": "queued",
             "result": None,
             "error": None,
-            "created_at": time.time(),
-            "updated_at": time.time(),
+            "created_at": now,
+            "updated_at": now,
+            "content_key": content_key,
         }
+        _DOWNLOAD_CONTENT_INDEX[content_key] = job_id
 
     thread = threading.Thread(target=run_download_job, args=(job_id, body), daemon=True)
     thread.start()
     return DownloadStartOut(ok=True, job_id=job_id, status="queued")
+
 
 
 @app.get("/download/status/{job_id}", response_model=DownloadStatusOut)
