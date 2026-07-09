@@ -505,6 +505,8 @@ function Home() {
           )}
         </section>
 
+        {jobs.length > 0 && <StatsDashboard jobs={jobs} />}
+
         <section className="mt-20 grid gap-4 md:grid-cols-3">
           <FeatureCard
             title="Parallel"
