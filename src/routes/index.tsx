@@ -419,7 +419,13 @@ function Home() {
                   className="h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 md:w-48"
                 >
                   {toDrive ? <HardDrive className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-                  {toDrive ? "Add to queue" : "Download"}
+                  {toDrive
+                    ? validUrls.length > 1
+                      ? `Add ${validUrls.length} to queue`
+                      : "Add to queue"
+                    : validUrls.length > 1
+                      ? `Download ${validUrls.length}`
+                      : "Download"}
                 </Button>
               </div>
 
