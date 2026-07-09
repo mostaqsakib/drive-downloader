@@ -472,15 +472,30 @@ function Home() {
           {jobs.length > 0 && (
             <div className="mx-auto mt-8 max-w-3xl">
               <div className="mb-3 flex items-center justify-between px-1">
-                <div className="text-sm text-muted-foreground">
-                  {activeCount > 0 ? (
-                    <>
-                      <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin text-primary" />
-                      {activeCount} running • {jobs.length} total
-                    </>
-                  ) : (
-                    <>History: {jobs.length} item{jobs.length > 1 ? "s" : ""}</>
+                <div className="flex flex-wrap items-center gap-2">
+                  {activeCount > 0 && (
+                    <Badge className="gap-1 bg-primary text-primary-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {activeCount} downloading
+                    </Badge>
                   )}
+                  {queuedCount > 0 && (
+                    <Badge variant="secondary">{queuedCount} queued</Badge>
+                  )}
+                  {doneCount > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="border-primary/30 text-primary"
+                    >
+                      {doneCount} uploaded
+                    </Badge>
+                  )}
+                  {failedCount > 0 && (
+                    <Badge variant="destructive">{failedCount} failed</Badge>
+                  )}
+                  <span className="text-sm text-muted-foreground">
+                    • {jobs.length} total
+                  </span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Button
@@ -502,7 +517,7 @@ function Home() {
                 </div>
               </div>
               <div className="flex flex-col gap-3">
-                {jobs.map((j) => (
+                {sortedJobs.map((j) => (
                   <JobCard
                     key={j.id}
                     job={j}
@@ -513,6 +528,7 @@ function Home() {
               </div>
             </div>
           )}
+
         </section>
 
         {jobs.length > 0 && <StatsDashboard jobs={jobs} />}
