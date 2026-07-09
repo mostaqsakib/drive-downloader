@@ -292,21 +292,30 @@ function Home() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return toast.error("Ekta URL diben");
-    const job: Job = {
+    if (validUrls.length === 0) {
+      if (parsedUrls.length > 0) {
+        return toast.error("Kono valid URL pawa jayni. Proti line-te ekta link thaka uchit.");
+      }
+      return toast.error("Ekta URL diben");
+    }
+
+    const newJobs: Job[] = validUrls.map((u) => ({
       id: crypto.randomUUID(),
-      url: trimmed,
+      url: u,
       mode,
       quality,
       toDrive,
       status: "queued",
       startedAt: Date.now(),
-    };
-    setJobs((prev) => [job, ...prev]);
-    setUrl("");
+    }));
+
+    setJobs((prev) => [...newJobs, ...prev]);
+    setUrlsText("");
     // Fire-and-forget — jobs run in parallel
-    void startJob(job);
+    newJobs.forEach((job) => void startJob(job));
+    toast.success(`${newJobs.length} ta URL queue-te add holo`, {
+      description: toDrive ? "Sob Drive-e upload hobe" : "Direct download link toiri hobe",
+    });
   };
 
   const removeJob = (id: string) =>
