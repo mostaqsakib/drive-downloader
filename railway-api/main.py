@@ -1351,21 +1351,37 @@ def start_download(body: DownloadIn, x_api_token: str = Header(None)):
 
     cleanup_download_jobs()
     job_id = download_job_id(body)
+    content_key = download_content_key(body)
+    now = time.time()
     with _DOWNLOAD_JOBS_LOCK:
         existing = _DOWNLOAD_JOBS.get(job_id)
         if existing:
             return DownloadStartOut(ok=True, job_id=job_id, status=existing["status"])
+        # Dedup: same content already running or recently succeeded → reuse it
+        # so the same video isn't re-uploaded to Drive multiple times.
+        prior_id = _DOWNLOAD_CONTENT_INDEX.get(content_key)
+        prior = _DOWNLOAD_JOBS.get(prior_id) if prior_id else None
+        if prior:
+            status = prior.get("status")
+            age = now - prior.get("updated_at", now)
+            if status in ("queued", "running"):
+                return DownloadStartOut(ok=True, job_id=prior_id, status=status)
+            if status == "done" and age < _DOWNLOAD_DEDUP_TTL:
+                return DownloadStartOut(ok=True, job_id=prior_id, status=status)
         _DOWNLOAD_JOBS[job_id] = {
             "status": "queued",
             "result": None,
             "error": None,
-            "created_at": time.time(),
-            "updated_at": time.time(),
+            "created_at": now,
+            "updated_at": now,
+            "content_key": content_key,
         }
+        _DOWNLOAD_CONTENT_INDEX[content_key] = job_id
 
     thread = threading.Thread(target=run_download_job, args=(job_id, body), daemon=True)
     thread.start()
     return DownloadStartOut(ok=True, job_id=job_id, status="queued")
+
 
 
 @app.get("/download/status/{job_id}", response_model=DownloadStatusOut)
