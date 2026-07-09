@@ -827,6 +827,9 @@ def build_ydl_opts(out_dir: Path, mode: str, quality: str, cookies_path: Optiona
     opts = {
         "outtmpl": str(out_dir / "%(title).200B.%(ext)s"),
         "format": fmt,
+        # Guarantee highest resolution/fps/bitrate wins in the merge selection.
+        "format_sort": ["res", "fps", "hdr", "tbr", "vcodec:h264", "acodec:m4a"],
+        "prefer_free_formats": False,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
