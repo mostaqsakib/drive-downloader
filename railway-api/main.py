@@ -152,13 +152,64 @@ def get_drive_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
+def _find_existing_drive_file(service, name: str, size: int) -> dict | None:
+    """Search this app's Drive files for one with the same name+size to avoid
+    duplicate uploads across retries / worker restarts. drive.file scope only
+    sees files created by this app, which is exactly what we want."""
+    try:
+        # Escape single quotes in name for the query
+        safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
+        q_parts = [f"name = '{safe_name}'", "trashed = false"]
+        if GOOGLE_DRIVE_FOLDER_ID:
+            q_parts.append(f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents")
+        q = " and ".join(q_parts)
+        resp = service.files().list(
+            q=q,
+            fields="files(id, name, size, webViewLink, webContentLink, createdTime)",
+            pageSize=20,
+            orderBy="createdTime desc",
+            spaces="drive",
+        ).execute()
+        for f in resp.get("files", []):
+            try:
+                if int(f.get("size", 0)) == size:
+                    return f
+            except (ValueError, TypeError):
+                continue
+    except Exception as e:
+        logger.warning("drive dedup lookup failed: %s", e)
+    return None
+
+
 def upload_to_drive(file_path: Path, progress_cb=None) -> dict:
     service = get_drive_service()
+    total_size = file_path.stat().st_size
+
+    # Pre-upload dedup: if a file with the same name+size already exists in
+    # our Drive folder, reuse it instead of uploading again.
+    existing = _find_existing_drive_file(service, file_path.name, total_size)
+    if existing:
+        logger.info("drive dedup hit: reusing existing file %s", existing.get("id"))
+        if progress_cb:
+            try:
+                progress_cb("uploading", total_size, total_size)
+            except Exception:
+                pass
+        # Ensure public read
+        try:
+            service.permissions().create(
+                fileId=existing["id"],
+                body={"role": "reader", "type": "anyone"},
+                fields="id",
+            ).execute()
+        except Exception:
+            pass
+        return existing
+
     metadata = {"name": file_path.name}
     if GOOGLE_DRIVE_FOLDER_ID:
         metadata["parents"] = [GOOGLE_DRIVE_FOLDER_ID]
 
-    total_size = file_path.stat().st_size
     media = MediaFileUpload(
         str(file_path),
         resumable=True,
@@ -194,6 +245,7 @@ def upload_to_drive(file_path: Path, progress_cb=None) -> dict:
         logger.warning("Could not set public permission: %s", e)
 
     return response
+
 
 
 # ---------- yt-dlp ----------
