@@ -829,7 +829,47 @@ function CookieEntryRow({
   );
 }
 
+function StatusBadge({ job }: { job: Job }) {
+  if (job.status === "queued") {
+    return (
+      <Badge variant="outline" className="shrink-0">
+        Queued
+      </Badge>
+    );
+  }
+  if (job.status === "running") {
+    const label =
+      job.phase === "uploading"
+        ? "Uploading"
+        : job.phase === "downloading" || job.phase === "processing"
+          ? "Downloading"
+          : "Processing";
+    return (
+      <Badge className="shrink-0 gap-1 bg-primary text-primary-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        {label}
+      </Badge>
+    );
+  }
+  if (job.status === "done") {
+    return (
+      <Badge
+        variant="outline"
+        className="shrink-0 border-primary/30 text-primary"
+      >
+        {job.toDrive ? "Uploaded" : "Ready"}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive" className="shrink-0">
+      Failed
+    </Badge>
+  );
+}
+
 function JobCard({
+
   job,
   onRemove,
   onRetry,
