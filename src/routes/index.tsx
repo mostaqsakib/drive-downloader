@@ -348,6 +348,16 @@ function Home() {
   };
 
   const activeCount = jobs.filter((j) => j.status === "running").length;
+  const queuedCount = jobs.filter((j) => j.status === "queued").length;
+  const doneCount = jobs.filter((j) => j.status === "done").length;
+  const failedCount = jobs.filter((j) => j.status === "error").length;
+
+  const statusPriority = (s: JobStatus) =>
+    s === "running" ? 0 : s === "queued" ? 1 : s === "error" ? 2 : 3;
+  const sortedJobs = [...jobs].sort(
+    (a, b) => statusPriority(a.status) - statusPriority(b.status) || b.startedAt - a.startedAt,
+  );
+
 
   return (
     <div className="min-h-screen">
