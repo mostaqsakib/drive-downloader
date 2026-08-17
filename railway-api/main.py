@@ -148,8 +148,20 @@ def get_drive_service():
         client_secret=GOOGLE_CLIENT_SECRET,
         scopes=["https://www.googleapis.com/auth/drive.file"],
     )
-    creds.refresh(GoogleRequest())
+    try:
+        creds.refresh(GoogleRequest())
+    except Exception as e:
+        msg = str(e)
+        if "invalid_grant" in msg or "invalid_client" in msg:
+            raise RuntimeError(
+                "Google Drive login expire hoye geche (invalid_grant). Railway-te "
+                "get_refresh_token.py abar chalie notun GOOGLE_REFRESH_TOKEN set korun. "
+                "Karon: token revoke kora hoyeche, password change, ba OAuth app 'Testing' "
+                "mode-e thakle 7 din por token auto-expire hoy (Publish korle ei problem hobe na)."
+            ) from e
+        raise RuntimeError(f"Google Drive auth failed: {msg}") from e
     return build("drive", "v3", credentials=creds, cache_discovery=False)
+
 
 
 def _find_existing_drive_file(service, name: str, size: int) -> dict | None:
